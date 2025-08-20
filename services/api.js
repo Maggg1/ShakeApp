@@ -1,6 +1,13 @@
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+// Debug logging toggle for API calls
+// Set to true to see [api] logs; false to silence them in dev and prod.
+const DEBUG_API = false;
+const apiDebug = (...args) => {
+  if (DEBUG_API) console.debug(...args);
+};
+
 // Configure your API here.
 export const API_BASE_URL = 'https://adminmanagementsystem.up.railway.app';
 
@@ -155,7 +162,7 @@ async function authFetch(path, { method = 'GET', headers = {}, body } = {}) {
   const isFormData = body instanceof FormData;
   const url = `${API_BASE_URL}${path}`;
 
-  console.debug(`[api] ${method} ${url}`);
+  apiDebug(`[api] ${method} ${url}`);
 
   const token = await getToken();
   const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
@@ -170,7 +177,7 @@ async function authFetch(path, { method = 'GET', headers = {}, body } = {}) {
     body: body ? (isFormData ? body : JSON.stringify(body)) : undefined,
   });
 
-  console.debug(`[api] <- ${res.status} ${method} ${url}`);
+  apiDebug(`[api] <- ${res.status} ${method} ${url}`);
 
   let data = null;
   const text = await res.text();
