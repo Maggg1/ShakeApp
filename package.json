@@ -25,8 +25,9 @@
     "expo-sensors": "^14.1.4",
     "expo-sms": "~13.1.4",
     "expo-status-bar": "~2.2.3",
-    "firebase": "^12.1.0",
-    "firebase-admin": "^13.4.0",
+    "expo-system-ui": "~5.0.10",
+    "expo-updates": "~0.28.17",
+    "mongodb": "^6.18.0",
     "react": "19.0.0",
     "react-async-hook": "^4.0.0",
     "react-dom": "19.0.0",
@@ -39,15 +40,14 @@
     "react-native-svg": "15.11.2",
     "react-native-web": "^0.20.0",
     "react-native-webview": "13.13.5",
-    "uuid": "^11.1.0",
-    "expo-updates": "~0.28.17",
-    "expo-system-ui": "~5.0.10"
+    "uuid": "^11.1.0"
   },
   "devDependencies": {
-    "@babel/core": "^7.20.0"
+    "@babel/core": "^7.20.0",
+    "@react-native-community/cli": "latest"
   },
   "private": true,
-  "description": "A React Native application with Firebase authentication and email verification.",
+  "description": "A React Native application with MongoDB authentication and email verification.",
   "keywords": [],
   "author": "",
   "license": "ISC",

@@ -4,7 +4,7 @@
     "slug": "ShakeApp",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/shakeicon.png",
     "userInterfaceStyle": "light",
     "splash": {
       "image": "./assets/splash-icon.png",
@@ -53,6 +53,6 @@
     "updates": {
       "url": "https://u.expo.dev/bf822e82-1381-45d4-a225-b7fd44e31993"
     },
-    "owner": "magdalene0_0"
+    "owner": "shakeapp"
   }
 }

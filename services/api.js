@@ -3,13 +3,17 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Debug logging toggle for API calls
 // Set to true to see [api] logs; false to silence them in dev and prod.
-const DEBUG_API = false;
+const DEBUG_API = true; // Set to true for better debugging
 const apiDebug = (...args) => {
   if (DEBUG_API) console.debug(...args);
 };
 
 // Configure your API here.
-export const API_BASE_URL = 'https://adminmanagementsystem.up.railway.app';
+const { getBackendUrl } = require('../config/unified-backend');
+
+// Use the dynamic backend URL from unified configuration
+const API_BASE_URL = getBackendUrl();
+apiDebug('[api] Using backend URL:', API_BASE_URL);
 
 // Toggle offline mode: when true, uses in-memory mocks
 export const OFFLINE_MODE = false;
@@ -33,7 +37,52 @@ let MOCK_ACTIVITIES = [];
 // Auth token storage
 const TOKEN_KEY = '@api_token_v1';
 let currentToken = null;
-const OVERLAY_KEY = '@api_user_overlay_v1';
+const OVERLAY_NS = '@api_user_overlay_v1';
+const makeUserKey = (u) => {
+  if (!u) return 'anonymous';
+  return String(u.id || u._id || u.uid || u.userId || u.email || 'anonymous');
+};
+async function readOverlayStore() {
+  try {
+    const raw = await AsyncStorage.getItem(OVERLAY_NS);
+    return raw ? JSON.parse(raw) : {};
+  } catch (_) {
+    return {};
+  }
+}
+async function writeOverlayStore(store) {
+  try {
+    if (store && Object.keys(store).length) {
+      await AsyncStorage.setItem(OVERLAY_NS, JSON.stringify(store));
+    } else {
+      await AsyncStorage.removeItem(OVERLAY_NS);
+    }
+  } catch (_) {}
+}
+async function getOverlayFor(userKey) {
+  const store = await readOverlayStore();
+  return store && userKey ? store[userKey] || null : null;
+}
+async function setOverlayFor(userKey, obj) {
+  const store = await readOverlayStore();
+  if (obj && Object.keys(obj).length) {
+    store[userKey] = obj;
+  } else {
+    delete store[userKey];
+  }
+  await writeOverlayStore(store);
+}
+
+// Client-only profile fields that the server may not persist
+const CLIENT_ONLY_KEYS = ['avatarIndex', 'bio', 'phone'];
+const pickClientOnly = (obj) => {
+  const res = {};
+  if (!obj) return res;
+  for (const k of CLIENT_ONLY_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(obj, k)) res[k] = obj[k];
+  }
+  return res;
+};
 async function getToken() {
   if (currentToken) return currentToken;
   try {
@@ -52,26 +101,14 @@ async function setToken(token) {
   } catch (_) {}
 }
 
-async function getOverlay() {
-  try {
-    const raw = await AsyncStorage.getItem(OVERLAY_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch (_) {
-    return null;
-  }
-}
-async function setOverlay(obj) {
-  try {
-    if (obj && Object.keys(obj).length) {
-      await AsyncStorage.setItem(OVERLAY_KEY, JSON.stringify(obj));
-    } else {
-      await AsyncStorage.removeItem(OVERLAY_KEY);
-    }
-  } catch (_) {}
-}
 function mergeUser(remote, overlay) {
   if (!overlay) return remote;
-  return { ...(remote || {}), ...(overlay || {}) };
+  const base = { ...(remote || {}) };
+  // Only apply client-only fields from overlay; never override server-managed fields
+  for (const k of CLIENT_ONLY_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(overlay, k)) base[k] = overlay[k];
+  }
+  return base;
 }
 
 function parseAnyDate(v) {
@@ -167,36 +204,52 @@ async function authFetch(path, { method = 'GET', headers = {}, body } = {}) {
   const token = await getToken();
   const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
 
-  const res = await fetch(url, {
-    method,
-    headers: {
-      ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
-      ...authHeaders,
-      ...headers,
-    },
-    body: body ? (isFormData ? body : JSON.stringify(body)) : undefined,
-  });
-
-  apiDebug(`[api] <- ${res.status} ${method} ${url}`);
-
-  let data = null;
-  const text = await res.text();
   try {
-    data = text ? JSON.parse(text) : null;
-  } catch (_) {
-    data = text;
-  }
+    const res = await fetch(url, {
+      method,
+      headers: {
+        ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
+        ...authHeaders,
+        ...headers,
+      },
+      body: body ? (isFormData ? body : JSON.stringify(body)) : undefined,
+    });
 
-  if (!res.ok) {
-    const message = (data && (data.message || data.error)) || `Request failed (${res.status})`;
-    console.warn(`[api] ERROR ${res.status} ${method} ${url}: ${message}`);
-    const err = new Error(message);
-    err.status = res.status;
-    err.data = data;
-    throw err;
-  }
+    apiDebug(`[api] <- ${res.status} ${method} ${url}`);
 
-  return data;
+    let data = null;
+    const text = await res.text();
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch (_) {
+      data = text;
+    }
+
+    if (!res.ok) {
+      const message = (data && (data.message || data.error)) || `Request failed (${res.status})`;
+      console.warn(`[api] ERROR ${res.status} ${method} ${url}: ${message}`);
+      const err = new Error(message);
+      err.status = res.status;
+      err.data = data;
+      throw err;
+    }
+
+    return data;
+  } catch (error) {
+    // Enhanced error handling for network failures
+    console.error(`[api] NETWORK ERROR ${method} ${url}:`, error.message);
+    
+    // Provide more specific error messages for common network issues
+    if (error.message.includes('Network request failed') || error.message.includes('Failed to fetch')) {
+      const enhancedError = new Error(`Network connection failed. Please check:\n1. Backend server is running\n2. Correct URL: ${url}\n3. CORS configuration\n4. Internet connection`);
+      enhancedError.status = 0;
+      enhancedError.isNetworkError = true;
+      enhancedError.originalError = error;
+      throw enhancedError;
+    }
+    
+    throw error;
+  }
 }
 
 // Helper: try multiple paths in order, returning first success; only swallows 404s
@@ -290,7 +343,8 @@ async function getCurrentUser() {
     return { ...MOCK_USER };
   }
   const remote = await tryFetchPaths(['/api/auth/me'], { method: 'GET' });
-  const overlay = await getOverlay();
+  const userKey = makeUserKey(remote);
+  const overlay = await getOverlayFor(userKey);
   const merged = mergeUser(remote, overlay);
   if (!merged?.createdAt) {
     const derived = extractCreatedAt(merged);
@@ -307,27 +361,47 @@ async function updateProfile(partial) {
   }
   try {
     const updated = await tryFetchPaths(['/api/users/me'], { method: 'PATCH', body: partial });
-    // Persist overlay to reflect immediately in getCurrentUser
-    const overlay = await getOverlay();
-    const nextOverlay = { ...(overlay || {}), ...(partial || {}) };
-    await setOverlay(nextOverlay);
+    // Determine a stable user key; fallback to current user if response lacks id/email
+    let baseForKey = updated;
+    let userKey = makeUserKey(baseForKey);
+    if (userKey === 'anonymous') {
+      try { const current = await getCurrentUser(); baseForKey = current; userKey = makeUserKey(current); } catch (_) {}
+    }
+    // Persist client-only fields locally; server-managed fields remain from server
+    const existing = await getOverlayFor(userKey);
+    const co = pickClientOnly(partial);
+    const nextOverlay = { ...(existing || {}), ...(co || {}) };
+    if (Object.keys(nextOverlay).length) await setOverlayFor(userKey, nextOverlay);
+    else await setOverlayFor(userKey, null);
     return updated;
   } catch (e) {
     if (e && e.status === 404) {
-      // Backend has no profile update endpoint; merge with current user client-side and persist overlay
+      // Backend has no profile update endpoint; merge with current user client-side and persist overlay per-user
       try {
         const current = await getCurrentUser();
         const merged = { ...(current || {}), ...(partial || {}) };
-        const overlay = await getOverlay();
-        const nextOverlay = { ...(overlay || {}), ...(partial || {}) };
-        await setOverlay(nextOverlay);
+        const userKey = makeUserKey(current);
+        const overlay = await getOverlayFor(userKey);
+        const co = pickClientOnly(partial);
+        const nextOverlay = { ...(overlay || {}), ...(co || {}) };
+        await setOverlayFor(userKey, nextOverlay);
         return merged;
       } catch (_) {
-        // As a last resort, just persist the partial as overlay
-        await setOverlay(partial || {});
+        // As a last resort, persist the partial as overlay (anonymous)
+        const co = pickClientOnly(partial);
+        await setOverlayFor('anonymous', co);
         return { ...(partial || {}) };
       }
     }
+    // Persist client-only fields locally even if server rejected (e.g., 409)
+    try {
+      const current = await getCurrentUser();
+      const userKey = makeUserKey(current);
+      const existing = await getOverlayFor(userKey);
+      const co = pickClientOnly(partial);
+      const nextOverlay = { ...(existing || {}), ...(co || {}) };
+      if (Object.keys(nextOverlay).length) await setOverlayFor(userKey, nextOverlay);
+    } catch (_) {}
     throw e;
   }
 }
@@ -338,8 +412,52 @@ async function logout() {
     return true;
   }
   await setToken(null);
-  await setOverlay(null);
+  try { await AsyncStorage.removeItem(OVERLAY_NS); } catch (_) {}
   return true;
+}
+
+// Account management
+async function disableAccount() {
+  if (OFFLINE_MODE) {
+    await delay(100);
+    await setOverlayFor('offline-user', { disabled: true });
+    return { ok: true, offline: true };
+  }
+  try {
+    const res = await tryFetchPaths(
+      ['/api/users/me/disable', '/api/users/disable', '/api/auth/disable', '/api/account/disable'],
+      { method: 'POST', body: { disabled: true } }
+    );
+    await setToken(null);
+    return res || { ok: true };
+  } catch (e) {
+    if (e && e.status === 404) {
+      // Backend doesn't support disable endpoint; mark locally (anonymous)
+      await setOverlayFor('anonymous', { disabled: true });
+      return { ok: false, skipped: true };
+    }
+    throw e;
+  }
+}
+
+async function deleteAccount() {
+  if (OFFLINE_MODE) {
+    await delay(100);
+    await setToken(null);
+    try { await AsyncStorage.removeItem(OVERLAY_NS); } catch (_) {}
+    return { ok: true, offline: true };
+  }
+  try {
+    const res = await tryFetchPaths(
+      ['/api/users/me', '/api/auth/delete-account', '/api/users/delete', '/api/account'],
+      { method: 'DELETE' }
+    );
+    await setToken(null);
+    try { await AsyncStorage.removeItem(OVERLAY_NS); } catch (_) {}
+    return res || { ok: true };
+  } catch (e) {
+    throw e;
+  }
 }
 
 // Password reset
@@ -483,6 +601,8 @@ export const api = {
   getCurrentUser,
   updateProfile,
   logout,
+  disableAccount,
+  deleteAccount,
   sendPasswordReset,
 
   // activities

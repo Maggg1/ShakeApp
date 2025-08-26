@@ -49,17 +49,27 @@ export default function DashboardScreen({ navigation }) {
   useEffect(() => {
     const fetchRecentActivities = async () => {
       try {
-        const activities = await api.getRecentShakeActivities({ limit: 3 });
-        // Ensure activities is an array before mapping
-        const activitiesArray = Array.isArray(activities) ? activities : [];
-        setRecentActivities(activitiesArray.map((activity, i) => {
+        const activities = await api.getRecentShakeActivities({ limit: 100 });
+        const arr = Array.isArray(activities) ? activities : [];
+        const mapped = arr.map((activity, i) => {
           const fallbackId = activity._id || activity.id || (activity.timestamp ? String(activity.timestamp) : `idx-${i}`);
-          return {
-            id: String(fallbackId),
-            ...activity,
-            timestamp: activity.timestamp ? new Date(activity.timestamp) : null,
-          };
-        }));
+          const ts = activity.timestamp ? new Date(activity.timestamp) : null;
+          return { id: String(fallbackId), ...activity, timestamp: ts };
+        });
+        // Filter to only Today and Yesterday
+        const now = new Date();
+        const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+        const todayStart = startOfDay(now).getTime();
+        const yesterdayStart = startOfDay(new Date(now.getTime() - 24*60*60*1000)).getTime();
+        const tomorrowStart = todayStart + 24*60*60*1000;
+        const filtered = mapped.filter(a => {
+          if (!a.timestamp) return false;
+          const t = a.timestamp.getTime();
+          return (t >= todayStart && t < tomorrowStart) || (t >= yesterdayStart && t < todayStart);
+        });
+        // Sort desc by time and take a reasonable number
+        filtered.sort((a,b) => (b.timestamp?.getTime()||0) - (a.timestamp?.getTime()||0));
+        setRecentActivities(filtered.slice(0, 20));
       } catch (error) {
         console.error('Error fetching activities:', error);
         setRecentActivities([]);
@@ -240,12 +250,10 @@ export default function DashboardScreen({ navigation }) {
         </TouchableOpacity>
       </View>
 
-      {/* Recent Activity */}
+      {/* Shake History (Today & Yesterday) */}
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>Recent Activity</Text>
-        <TouchableOpacity onPress={() => navigation.navigate('RecentActivty')}>
-          <Text style={styles.seeAllText}>See All</Text>
-        </TouchableOpacity>
+        <View />
       </View>
 
       <View style={styles.activityList}>
@@ -473,12 +481,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#8A8A8E',
   },
-  activityPoints: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#4A80F0',
-  },
-  emptyState: {
+    emptyState: {
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 40,

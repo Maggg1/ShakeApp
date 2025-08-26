@@ -1,14 +1,13 @@
 # ShakeApp - React Native App
 
-A React Native application with Firebase authentication and email verification.
+A React Native application with MongoDB API authentication and user management.
 
 ## Features
 
 ### Authentication
-- **User Registration**: Complete signup flow with email verification
-- **Email Verification**: Required before users can access the app
-- **User Login**: Secure authentication with Firebase
-- **Password Management**: Forgot password functionality
+- **User Registration**: Complete signup flow with direct MongoDB API integration
+- **User Login**: Secure authentication with MongoDB API
+- **Password Management**: Forgot password functionality with MongoDB API
 
 ### UI/UX Improvements
 - **Modern Design**: Beautiful gradient backgrounds and card-based layouts
@@ -17,21 +16,19 @@ A React Native application with Firebase authentication and email verification.
 - **Password Visibility**: Toggle password visibility for better UX
 - **Responsive Layout**: Optimized for different screen sizes
 
-## Email Verification Flow
-
-1. **User Signup**: Users create an account with email, password, username, and phone
-2. **Verification Email**: Firebase automatically sends a verification email
-3. **Email Verification Screen**: Users are directed to a dedicated verification screen
-4. **Verification Process**: Users click the link in their email
-5. **Account Activation**: Once verified, users can sign in and access the app
+### Core Functionality
+- **Shake Tracking**: Record and track phone shakes with daily limits
+- **User Profile**: Manage user profile and avatar selection
+- **Activity History**: View recent shake activities and feedback
+- **Feedback System**: Submit user feedback and ratings
 
 ## Technical Implementation
 
-### Firebase Integration
-- Firebase Authentication for user management
-- Firestore for user data storage
-- Email verification through Firebase Auth
-- Real-time authentication state monitoring
+### MongoDB API Integration
+- Direct MongoDB API calls for authentication
+- Custom API service for user management
+- Secure token-based authentication
+- Real-time data synchronization
 
 ### Navigation
 - Stack-based navigation with React Navigation
@@ -40,20 +37,28 @@ A React Native application with Firebase authentication and email verification.
 
 ### State Management
 - Local state for form inputs and UI states
-- Firebase Auth state synchronization
+- API state synchronization
 - Proper error handling and user feedback
 
 ## File Structure
 
 ```
 screens/
-├── SignupScreen.js          # Enhanced signup with email verification
-├── EmailVerificationScreen.js # New email verification screen
-├── LoginScreen.js           # Enhanced login with verification check
-└── ...                      # Other existing screens
+├── SignupScreen.js          # User registration with MongoDB API
+├── LoginScreen.js           # User login with MongoDB API
+├── ForgotPasswordScreen.js  # Password reset functionality
+├── DashboardScreen.js       # Main dashboard with user stats
+├── ProfileScreen.js         # User profile management
+├── ShakeScreen.js          # Shake tracking functionality
+├── ShakesHistoryScreen.js  # Shake activity history
+├── RecentActivtyScreen.js  # Recent user activities
+├── FeedbackScreen.js       # User feedback submission
+└── ...                      # Other screens
 
-App.js                       # Updated navigation with EmailVerification
-firebase.js                  # Firebase configuration and helpers
+services/
+└── api.js                  # MongoDB API service layer
+
+App.js                      # Main application navigation
 ```
 
 ## Getting Started
@@ -63,10 +68,9 @@ firebase.js                  # Firebase configuration and helpers
    npm install
    ```
 
-2. Configure Firebase:
-   - Update `firebase.js` with your Firebase project credentials
-   - Enable Email/Password authentication in Firebase Console
-   - Enable Email verification in Firebase Console
+2. Configure MongoDB API:
+   - Ensure your MongoDB API endpoints are properly configured
+   - Update API base URL in `services/api.js` if needed
 
 3. Run the app:
    ```bash
@@ -76,23 +80,33 @@ firebase.js                  # Firebase configuration and helpers
 ## Dependencies
 
 - React Native
-- Firebase (v12+)
 - React Navigation
 - Expo Linear Gradient
 - AsyncStorage for persistence
+- Axios for API calls
 
 ## Security Features
 
-- Email verification required for account activation
+- Secure token-based authentication
 - Password strength validation
 - Rate limiting for failed login attempts
-- Secure Firebase authentication
 - User data validation and sanitization
+- Secure API communication
+
+## API Endpoints Used
+
+- User registration (`/api/auth/register`)
+- User login (`/api/auth/login`)
+- Password reset (`/api/auth/forgot-password`)
+- User profile management (`/api/user/profile`)
+- Shake recording (`/api/shakes/record`)
+- Activity tracking (`/api/activities`)
+- Feedback submission (`/api/feedback`)
 
 ## Future Enhancements
 
-- Phone number verification (SMS)
-- Two-factor authentication
-- Social media login integration
-- Advanced password policies
-- User profile customization
+- Enhanced user profile customization
+- Social features and user connections
+- Advanced analytics and reporting
+- Push notifications
+- Multi-language support

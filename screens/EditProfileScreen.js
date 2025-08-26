@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useFocusEffect } from '@react-navigation/native';
 import { avatars } from '../assets/avatars';
 import { api } from '../services/api';
 
@@ -30,6 +31,7 @@ export default function EditProfileScreen({ navigation }) {
   const [selectedAvatar, setSelectedAvatar] = useState(0);
   const [isUpdating, setIsUpdating] = useState(false);
   const [errors, setErrors] = useState({});
+  const [initial, setInitial] = useState(null);
   
   // Animation values
   const fadeAnim = useState(new Animated.Value(0))[0];
@@ -40,11 +42,18 @@ export default function EditProfileScreen({ navigation }) {
       try {
         const user = await api.getCurrentUser();
         if (user) {
-          setName(user.username || '');
+          const derivedName = user.name || user.username || (user.email ? user.email.split('@')[0] : 'User');
+          const rawIdx = user.avatarIndex;
+          let idx = Number(rawIdx);
+          if (Number.isNaN(idx) || idx < 0 || idx >= avatars.length) idx = 0;
+          const phoneVal = user.phone || user.profile?.phone || '+0000000000';
+
+          setName(derivedName);
           setEmail(user.email || '');
-          setSelectedAvatar(typeof user.avatarIndex === 'number' ? user.avatarIndex : 0);
+          setSelectedAvatar(idx);
           setBio(user.bio || '');
-          setPhone(user.phone || '');
+          setPhone(String(phoneVal));
+          setInitial({ name: derivedName, email: user.email || '', phone: String(phoneVal), avatarIndex: idx, bio: user.bio || '' });
         }
       } catch (error) {
         console.error('Error loading user data:', error);
@@ -68,6 +77,35 @@ export default function EditProfileScreen({ navigation }) {
       }),
     ]).start();
   }, []);
+
+  // Refresh data when screen gains focus to ensure sync
+  useFocusEffect(
+    React.useCallback(() => {
+      let active = true;
+      const fetch = async () => {
+        try {
+          const user = await api.getCurrentUser();
+          if (!active) return;
+          const derivedName = user?.name || user?.username || (user?.email ? user.email.split('@')[0] : 'User');
+          const rawIdx = user?.avatarIndex;
+          let idx = Number(rawIdx);
+          if (Number.isNaN(idx) || idx < 0 || idx >= avatars.length) idx = 0;
+          const phoneVal = user?.phone || user?.profile?.phone || '+0000000000';
+
+          setName(derivedName);
+          setEmail(user?.email || '');
+          setSelectedAvatar(idx);
+          setBio(user?.bio || '');
+          setPhone(String(phoneVal));
+          setInitial({ name: derivedName, email: user?.email || '', phone: String(phoneVal), avatarIndex: idx, bio: user?.bio || '' });
+        } catch (e) {
+          console.error('Error loading user data (focus):', e);
+        }
+      };
+      fetch();
+      return () => { active = false; };
+    }, [])
+  );
 
   const validateForm = () => {
     const newErrors = {};
@@ -103,16 +141,27 @@ export default function EditProfileScreen({ navigation }) {
 
     setIsUpdating(true);
     try {
-      // Update profile via API (works offline with mocks)
-      await api.updateProfile({
-        name: name.trim(),
-        username: name.trim(),
-        email: email.trim(),
-        avatarIndex: selectedAvatar,
-        bio: bio.trim(),
-        phone: phone.trim(),
-        updatedAt: new Date().toISOString(),
-      });
+      // Only send changed fields to avoid server conflicts (e.g., 409 email)
+      const payload = {};
+      if (!initial || name.trim() !== (initial.name || '')) {
+        payload.name = name.trim();
+        payload.username = name.trim();
+      }
+      if (!initial || email.trim() !== (initial.email || '')) {
+        payload.email = email.trim();
+      }
+      if (!initial || selectedAvatar !== (initial.avatarIndex ?? selectedAvatar)) {
+        payload.avatarIndex = selectedAvatar;
+      }
+      if (!initial || (bio || '').trim() !== (initial.bio || '')) {
+        payload.bio = bio.trim();
+      }
+      if (!initial || phone.trim() !== (initial.phone || '')) {
+        payload.phone = phone.trim();
+      }
+      payload.updatedAt = new Date().toISOString();
+
+      await api.updateProfile(payload);
 
       // Log activity (non-blocking)
       try {

@@ -82,18 +82,15 @@ export default function ForgotPasswordScreen({ navigation }) {
   const handleResetError = (error) => {
     let errorMessage = 'Failed to send reset email';
     
-    switch (error.code) {
-      case 'auth/invalid-email':
-        errorMessage = 'Invalid email address';
-        break;
-      case 'auth/user-not-found':
-        errorMessage = 'No account found with this email';
-        break;
-      case 'auth/too-many-requests':
-        errorMessage = 'Too many attempts. Please try again later';
-        break;
-      default:
-        errorMessage = error.message;
+    // Handle MongoDB API errors
+    if (error.status === 404) {
+      errorMessage = 'Password reset endpoint not available';
+    } else if (error.status === 400) {
+      errorMessage = 'Invalid email address';
+    } else if (error.status === 429) {
+      errorMessage = 'Too many attempts. Please try again later';
+    } else if (error.message) {
+      errorMessage = error.message;
     }
     
     Alert.alert('Error', errorMessage);

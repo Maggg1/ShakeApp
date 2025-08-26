@@ -85,7 +85,10 @@ export default function SignupScreen({ navigation }) {
     } catch (error) {
       let errorMessage = error?.message || 'Registration failed';
       
-      if (error.status === 401) {
+      // Handle enhanced network error messages
+      if (error.isNetworkError) {
+        errorMessage = error.message;
+      } else if (error.status === 401) {
         errorMessage = 'Invalid email or password';
       } else if (error.status === 404) {
         errorMessage = 'Account not found';
@@ -93,8 +96,11 @@ export default function SignupScreen({ navigation }) {
         errorMessage = 'Invalid credentials format';
       } else if (error.status === 429) {
         errorMessage = 'Too many attempts. Please try again later.';
+      } else if (error.status === 0) {
+        errorMessage = 'Network connection failed. Please check your internet connection and ensure the backend server is running.';
       }
       
+      console.error('Registration error:', error);
       Alert.alert('Registration Failed', errorMessage);
     } finally {
       setLoading(false);
