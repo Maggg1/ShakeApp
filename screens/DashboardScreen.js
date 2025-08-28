@@ -1,21 +1,24 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image, Alert, Dimensions } from 'react-native';
+import React, { useState, useCallback } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image, Alert, Dimensions, RefreshControl } from 'react-native';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import { api } from '../services/api';
-import { avatars } from '../assets/avatars'; // Ensure this exports an array of image imports
+import { avatars } from '../assets/avatars';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect } from '@react-navigation/native';
 
 export default function DashboardScreen({ navigation }) {
   const [username, setUsername] = useState('User');
-  const [avatarIndex, setAvatarIndex] = useState(null); // New: to store selected avatar
+  const [avatarIndex, setAvatarIndex] = useState(null);
   const [totalShakes, setTotalShakes] = useState(0);
   const [dailyShakes, setDailyShakes] = useState(0);
-    const [recentActivities, setRecentActivities] = useState([]);
+  const [recentActivities, setRecentActivities] = useState([]);
+  const [refreshing, setRefreshing] = useState(false);
 
   const fetchUserData = useCallback(async () => {
     try {
       const userData = await api.getCurrentUser();
+      console.log('Fetched user data:', userData);
+      
       if (userData) {
         const name = userData.name || userData.username || (userData.email ? userData.email.split('@')[0] : 'User');
         setUsername(name);
@@ -27,81 +30,136 @@ export default function DashboardScreen({ navigation }) {
           setAvatarIndex(null);
         }
 
-        setTotalShakes(userData.totalShakes || 0);
-        setDailyShakes(userData.dailyShakes || 0);
-
-        await checkAndResetDailyShakes(userData);
+        // Calculate statistics from shake data
+        try {
+          const today = new Date();
+          const yyyy = today.getFullYear();
+          const mm = String(today.getMonth() + 1).padStart(2, '0');
+          const dd = String(today.getDate()).padStart(2, '0');
+          const todayDate = `${yyyy}-${mm}-${dd}`;
+          
+          // Get today's shakes
+          const todayShakes = await api.getShakesToday();
+          const dailyCount = Array.isArray(todayShakes) ? todayShakes.length : 0;
+          
+          // Get all shakes for total count
+          const allShakes = await api.getShakes();
+          const totalCount = Array.isArray(allShakes) ? allShakes.length : 0;
+          
+          console.log('Calculated stats - Total:', totalCount, 'Daily:', dailyCount);
+          setTotalShakes(totalCount);
+          setDailyShakes(dailyCount);
+        } catch (shakeError) {
+          console.error("Error fetching shake statistics:", shakeError);
+          setTotalShakes(0);
+          setDailyShakes(0);
+        }
       }
     } catch (error) {
       console.error("Error fetching user data:", error);
     }
   }, []);
 
-  useEffect(() => {
-    fetchUserData();
-  }, [fetchUserData]);
+  const fetchRecentActivities = useCallback(async () => {
+    try {
+      const activities = await api.getRecentShakeActivities({ limit: 50 });
+      console.log('Fetched activities:', activities);
+      const arr = Array.isArray(activities) ? activities : [];
+      console.log('Activities array length:', arr.length);
+      
+      const processedActivities = arr
+        .map((activity, i) => {
+          console.log('Processing activity:', activity);
+          // Handle timestamp parsing more robustly
+          let timestamp = null;
+          const timestampSource = activity.timestamp || activity.createdAt || activity.updatedAt;
+          if (timestampSource) {
+            if (typeof timestampSource === 'string' || typeof timestampSource === 'number') {
+              timestamp = new Date(timestampSource);
+            } else if (timestampSource && timestampSource.seconds) {
+              timestamp = new Date(timestampSource.seconds * 1000);
+            } else if (timestampSource instanceof Date) {
+              timestamp = timestampSource;
+            }
+          }
+          
+          // Generate fallback ID more robustly
+          const fallbackId = activity._id || activity.id || (timestamp ? timestamp.getTime() : `idx-${i}`);
+          
+          let title = '';
+          switch (activity.type) {
+            case 'shake':
+              if (activity.details && activity.details.reward) {
+                title = `Shaked and received: ${activity.details.reward.name}`;
+              } else {
+                title = 'Shake';
+              }
+              break;
+            case 'feedback':
+              title = activity.title ? `Feedback: ${activity.title}` : 'Feedback submitted';
+              break;
+            case 'profile_update':
+            case 'profile':
+            case 'update_profile':
+              title = 'Profile updated';
+              break;
+            case 'reward':
+              title = activity.title || activity.description || 'Reward received';
+              break;
+            default:
+              title = activity.title || activity.description || 'Activity';
+          }
+          
+          return { 
+            id: String(fallbackId), 
+            ...activity, 
+            timestamp,
+            title
+          };
+        })
+        .filter(activity => {
+          // Filter out activities without valid timestamps
+          const isValid = activity.timestamp && !isNaN(activity.timestamp.getTime());
+          if (!isValid) {
+            console.log('Filtering out activity with invalid timestamp:', activity);
+          }
+          return isValid;
+        });
+
+      console.log('Processed activities before sorting:', processedActivities);
+      
+      // Sort activities by timestamp (newest first)
+      processedActivities.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+      
+      console.log('Processed activities after sorting:', processedActivities);
+      
+      // Limit to 6 most recent activities
+      const limitedActivities = processedActivities.slice(0, 6);
+      console.log('Setting recent activities:', limitedActivities);
+      setRecentActivities(limitedActivities);
+    } catch (error) {
+      console.error('Error fetching activities:', error);
+      setRecentActivities([]);
+    }
+  }, []);
 
   useFocusEffect(useCallback(() => {
+    console.log('Dashboard focused - refreshing data');
     fetchUserData();
-  }, [fetchUserData]));
-
-  // Fetch recent activities (only shake activities)
-  useEffect(() => {
-    const fetchRecentActivities = async () => {
-      try {
-        const activities = await api.getRecentShakeActivities({ limit: 100 });
-        const arr = Array.isArray(activities) ? activities : [];
-        const mapped = arr.map((activity, i) => {
-          const fallbackId = activity._id || activity.id || (activity.timestamp ? String(activity.timestamp) : `idx-${i}`);
-          const ts = activity.timestamp ? new Date(activity.timestamp) : null;
-          return { id: String(fallbackId), ...activity, timestamp: ts };
-        });
-        // Filter to only Today and Yesterday
-        const now = new Date();
-        const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
-        const todayStart = startOfDay(now).getTime();
-        const yesterdayStart = startOfDay(new Date(now.getTime() - 24*60*60*1000)).getTime();
-        const tomorrowStart = todayStart + 24*60*60*1000;
-        const filtered = mapped.filter(a => {
-          if (!a.timestamp) return false;
-          const t = a.timestamp.getTime();
-          return (t >= todayStart && t < tomorrowStart) || (t >= yesterdayStart && t < todayStart);
-        });
-        // Sort desc by time and take a reasonable number
-        filtered.sort((a,b) => (b.timestamp?.getTime()||0) - (a.timestamp?.getTime()||0));
-        setRecentActivities(filtered.slice(0, 20));
-      } catch (error) {
-        console.error('Error fetching activities:', error);
-        setRecentActivities([]);
-      }
-    };
-
     fetchRecentActivities();
-  }, []);
-  
-  // Function to check and reset daily shakes at midnight
-  const checkAndResetDailyShakes = async (userData) => {
-    try {
-      const lastShakeTime = userData.lastShakeTime ? new Date(userData.lastShakeTime) : null;
-      
-      if (lastShakeTime) {
-        const today = new Date();
-        const lastShakeDate = new Date(lastShakeTime);
-        
-        // Check if last shake was on a different day
-        if (today.getDate() !== lastShakeDate.getDate() || 
-            today.getMonth() !== lastShakeDate.getMonth() || 
-            today.getFullYear() !== lastShakeDate.getFullYear()) {
-          // Reset daily shakes count via API
-          await api.updateProfile({ dailyShakes: 0 });
-          setDailyShakes(0);
-        }
-      }
-    } catch (error) {
-      console.error('Error checking/resetting daily shakes:', error);
-    }
-  };
+  }, []));
 
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await Promise.all([fetchUserData(), fetchRecentActivities()]);
+    } catch (error) {
+      console.error('Error refreshing dashboard:', error);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [fetchUserData, fetchRecentActivities]);
+  
   const handleLogout = () => {
     Alert.alert(
       "Logout",
@@ -114,7 +172,6 @@ export default function DashboardScreen({ navigation }) {
     );
   };
 
-  // Helper functions for activities
   const formatDate = (date) => {
     if (!date) return '';
     
@@ -136,13 +193,22 @@ export default function DashboardScreen({ navigation }) {
   };
 
   const getIconForType = (type) => {
-    const icons = {
-      shake: 'phone-portrait-outline',
-      feedback: 'star-outline',
-      reward: 'gift-outline',
-      default: 'notifications-outline'
-    };
-    return icons[type] || icons.default;
+    switch (type) {
+      case 'shake':
+        return 'hand-left-outline';
+      case 'profile_update':
+      case 'profile':
+      case 'update_profile':
+        return 'person-outline';
+      case 'feedback':
+        return 'chatbubble-outline';
+      case 'reward':
+        return 'gift-outline';
+      case 'login':
+        return 'log-in-outline';
+      default:
+        return 'ellipse-outline';
+    }
   };
 
   const getBackgroundColor = (type) => {
@@ -166,14 +232,25 @@ export default function DashboardScreen({ navigation }) {
   };
 
   return (
-    <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+    <ScrollView 
+      style={styles.container} 
+      showsVerticalScrollIndicator={false} 
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+          colors={['#669198']}
+          tintColor="#669198"
+        />
+      }
+    >
       {/* Top Bar */}
       <View style={styles.topBar}>
         <TouchableOpacity onPress={() => navigation.navigate('Profile')} style={styles.avatarContainer}>
           {avatarIndex !== null && avatars[avatarIndex] ? (
             <Image source={avatars[avatarIndex]} style={styles.avatarIcon} />
           ) : (
-            <Ionicons name="person-circle-outline" size={36} color="#4A80F0" />
+            <Image source={require('../assets/images/Default.png')} style={styles.avatarIcon} />
           )}
         </TouchableOpacity>
 
@@ -186,6 +263,7 @@ export default function DashboardScreen({ navigation }) {
           <Ionicons name="log-out-outline" size={28} color="#4A80F0" />
         </TouchableOpacity>
       </View>
+
       <LinearGradient
         colors={['#97c5cc', '#669198']}
         style={styles.statsCard}
@@ -212,7 +290,7 @@ export default function DashboardScreen({ navigation }) {
             <Text style={styles.statValue}>{dailyShakes}/5</Text>
             <Text style={styles.statLabel}>Today</Text>
           </View>
-                  </View>
+        </View>
       </LinearGradient>
 
       {/* Quick Actions */}
@@ -250,10 +328,12 @@ export default function DashboardScreen({ navigation }) {
         </TouchableOpacity>
       </View>
 
-      {/* Shake History (Today & Yesterday) */}
+      {/* Recent Activity */}
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>Recent Activity</Text>
-        <View />
+        <TouchableOpacity onPress={() => navigation.navigate('RecentActivty')}>
+          <Text style={{ fontSize: 14, color: '#4A80F0', fontWeight: '600' }}>See more</Text>
+        </TouchableOpacity>
       </View>
 
       <View style={styles.activityList}>
@@ -271,7 +351,7 @@ export default function DashboardScreen({ navigation }) {
                 <Text style={styles.activityTitle}>{activity.title}</Text>
                 <Text style={styles.activityTime}>{formatDate(activity.timestamp)}</Text>
               </View>
-                          </View>
+            </View>
           ))
         ) : (
           <View style={styles.emptyState}>
@@ -282,7 +362,6 @@ export default function DashboardScreen({ navigation }) {
         )}
       </View>
 
-      {/* Bottom Padding */}
       <View style={{ height: 30 }} />
     </ScrollView>
   );
@@ -401,11 +480,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#333',
   },
-  seeAllText: {
-    fontSize: 14,
-    color: '#4A80F0',
-    fontWeight: '600',
-  },
   featuresGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -481,7 +555,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#8A8A8E',
   },
-    emptyState: {
+  emptyState: {
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 40,

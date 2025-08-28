@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,86 +7,252 @@ import {
   Alert,
   Image,
   ScrollView,
+  Modal,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { Accelerometer } from 'expo-sensors';
+import { Platform } from 'react-native';
 import { api } from '../services/api';
 
 export default function ShakeScreen({ navigation }) {
-  const DAILY_LIMIT = 5;
 
-  const [totalShakes, setTotalShakes] = useState(0);
-  const [dailyShakes, setDailyShakes] = useState(0);
+  // Remove total and daily shakes state from ShakeScreen
   const [isShaking, setIsShaking] = useState(false);
+  const [showReward, setShowReward] = useState(false);
+  const [currentReward, setCurrentReward] = useState(null);
+  const [dailyShakes, setDailyShakes] = useState(0);
+  const [dailyLimit, setDailyLimit] = useState(5); // Daily limit of 5 shakes
+  const [limitReached, setLimitReached] = useState(false);
 
+  const inFlightRef = useRef(false);
+  const accelSubRef = useRef(null);
+  const lastMagRef = useRef(0);
+  const lastTriggerRef = useRef(0);
+
+  // Fetch today's shake count on mount
   useEffect(() => {
-    const init = async () => {
-      try {
-        const user = await api.getCurrentUser();
-        await checkAndResetDaily(user);
-      } catch (e) {
-        // If offline mocks or errors, still allow UI
-        console.warn('Failed to load user on Shake screen:', e?.message || e);
-      }
-    };
-    init();
+    fetchTodayShakes();
   }, []);
 
-  const sameDay = (a, b) => {
-    return (
-      a.getFullYear() === b.getFullYear() &&
-      a.getMonth() === b.getMonth() &&
-      a.getDate() === b.getDate()
-    );
+  // Accelerometer-based shake detection with threshold and debounce
+  useEffect(() => {
+    let subscribed = true;
+    let subscription = null;
+
+    // Only enable accelerometer on native platforms
+    if (Platform.OS !== 'web') {
+      const initializeAccelerometer = async () => {
+        try {
+          // Check if accelerometer is available
+          const isAvailable = await Accelerometer.isAvailableAsync();
+          if (!isAvailable) {
+            console.warn('Accelerometer not available on this device');
+            return;
+          }
+
+          // Set update interval with error handling
+          try { 
+            Accelerometer.setUpdateInterval(120); 
+          } catch (error) {
+            console.warn('Failed to set accelerometer update interval:', error);
+          }
+
+          subscription = Accelerometer.addListener(({ x, y, z }) => {
+            if (!subscribed) return;
+            // avoid triggering when limit reached or a request is in-flight
+            if (limitReached || inFlightRef.current) return;
+
+            const mag = Math.sqrt((x || 0) * (x || 0) + (y || 0) * (y || 0) + (z || 0) * (z || 0));
+            const lastMag = lastMagRef.current || 0;
+            const delta = Math.abs(mag - lastMag);
+            lastMagRef.current = mag;
+
+            const now = Date.now();
+            const since = now - (lastTriggerRef.current || 0);
+            const THRESHOLD = 1.2; // tune as needed; higher => harder to trigger
+            const DEBOUNCE_MS = 1200; // prevent rapid repeats
+
+            if (delta > THRESHOLD && since > DEBOUNCE_MS && !isShaking) {
+              lastTriggerRef.current = now;
+              // trigger existing flow
+              handleShake();
+            }
+          });
+          accelSubRef.current = subscription;
+        } catch (error) {
+          console.error('Failed to initialize accelerometer:', error);
+        }
+      };
+
+      initializeAccelerometer();
+    }
+
+    return () => {
+      subscribed = false;
+      try { 
+        if (subscription && subscription.remove) {
+          subscription.remove();
+        }
+      } catch (error) {
+        console.warn('Error removing accelerometer subscription:', error);
+      }
+      accelSubRef.current = null;
+    };
+  }, [limitReached, isShaking]);
+
+  const fetchTodayShakes = async () => {
+    try {
+      const todayShakes = await api.getShakesToday();
+      const count = Array.isArray(todayShakes) ? todayShakes.length : 0;
+      setDailyShakes(count);
+      setLimitReached(count >= dailyLimit);
+    } catch (error) {
+      console.error('Error fetching today\'s shakes:', error);
+    }
   };
 
-  const checkAndResetDaily = async (user) => {
-    try {
-      const now = new Date();
-      const lastShakeTime = user?.lastShakeTime ? new Date(user.lastShakeTime) : null;
+  // Don't fetch statistics on mount - DashboardScreen handles this
+  // We'll update local state when shakes are recorded
 
-      if (!lastShakeTime || !sameDay(lastShakeTime, now)) {
-        // Reset daily count
-        const updated = await api.updateProfile({ dailyShakes: 0, lastShakeTime: null });
-        setDailyShakes(updated?.dailyShakes || 0);
-        setTotalShakes(updated?.totalShakes || user?.totalShakes || 0);
-      } else {
-        setDailyShakes(user?.dailyShakes || 0);
-        setTotalShakes(user?.totalShakes || 0);
+  const getRandomReward = async () => {
+    try {
+      // Fetch rewards from backend
+      const response = await fetch(`${api.API_BASE_URL}/api/rewards`);
+      const rewards = await response.json();
+      
+      if (rewards && rewards.length > 0) {
+        // Filter active rewards
+        const activeRewards = rewards.filter(reward => reward.active);
+        
+        if (activeRewards.length > 0) {
+          // Simple probability-based selection
+          const totalProbability = activeRewards.reduce((sum, reward) => sum + reward.probability, 0);
+          let random = Math.random() * totalProbability;
+          
+          for (const reward of activeRewards) {
+            if (random < reward.probability) {
+              return reward;
+            }
+            random -= reward.probability;
+          }
+          
+          // Fallback to first reward if probability calculation fails
+          return activeRewards[0];
+        }
       }
-    } catch (e) {
-      console.warn('checkAndResetDaily error:', e?.message || e);
-      setDailyShakes(user?.dailyShakes || 0);
-      setTotalShakes(user?.totalShakes || 0);
+    } catch (error) {
+      console.warn('Failed to fetch rewards:', error);
     }
+    
+    // Default reward if no rewards available
+    return {
+      name: '10 Coins',
+      description: 'Congratulations! You earned 10 coins!',
+      points: 10
+    };
   };
 
   const handleShake = async () => {
-    if (isShaking) return;
+    // Sync re-entry guard to prevent double taps creating duplicate shakes
+    if (inFlightRef.current) return;
 
-    if (dailyShakes >= DAILY_LIMIT) {
-      Alert.alert('Daily limit reached', 'You have reached 5 shakes for today. Come back tomorrow!');
+    if (isShaking) return;
+    
+    // Check daily limit before allowing shake (quick UI check)
+    if (limitReached) {
+      Alert.alert(
+        'Daily Limit Reached',
+        `You've reached your daily limit of ${dailyLimit} shakes. Come back tomorrow to shake again!`,
+        [{ text: 'OK', style: 'cancel' }]
+      );
       return;
     }
 
+    // Server-synced pre-check to avoid races with other devices/sessions
+    try {
+      const todayShakes = await api.getShakesToday();
+      const currentCount = Array.isArray(todayShakes) ? todayShakes.length : 0;
+      if (currentCount >= dailyLimit) {
+        setDailyShakes(currentCount);
+        setLimitReached(true);
+        Alert.alert(
+          'Daily Limit Reached',
+          `You've reached your daily limit of ${dailyLimit} shakes. Come back tomorrow to shake again!`,
+          [{ text: 'OK', style: 'cancel' }]
+        );
+        return;
+      }
+    } catch (_) {
+      // If pre-check fails, continue; backend will enforce if necessary
+    }
+
+    inFlightRef.current = true;
     setIsShaking(true);
     try {
-      await api.recordShake({ count: 1 });
+      // Get random reward first
+      const reward = await getRandomReward();
+      
+      console.log('Shake recorded with reward:', reward.name);
+      await api.recordShake({ 
+        count: 1,
+        reward: reward.name,
+        rewardDescription: reward.description
+      });
 
-      // Update local counters immediately
-      setDailyShakes((prev) => prev + 1);
-      setTotalShakes((prev) => prev + 1);
+      // Refresh from backend to ensure accurate count (prevents +2 issues)
+      await fetchTodayShakes();
+
+      // Show reward
+      setCurrentReward(reward);
+      setShowReward(true);
 
       // Small visual feedback delay
       setTimeout(() => setIsShaking(false), 600);
     } catch (e) {
       console.error('Shake failed:', e);
       setIsShaking(false);
-      Alert.alert('Error', 'Failed to record shake. Please try again.');
+      
+      // Handle specific error cases
+      if (e.code === 'DAILY_LIMIT_EXCEEDED' || e.status === 429) {
+        // Backend validation caught the limit - update local state to match
+        Alert.alert(
+          'Daily Limit Reached',
+          `You've reached your daily limit of ${dailyLimit} shakes. Come back tomorrow to shake again!`,
+          [{ text: 'OK', style: 'cancel' }]
+        );
+        
+        // Refresh today's shake count to get accurate data from backend
+        try {
+          await fetchTodayShakes();
+        } catch (refreshError) {
+          console.error('Error refreshing shake count:', refreshError);
+        }
+      } else if (e.isNetworkError) {
+        Alert.alert(
+          'Network Error',
+          'Unable to connect to the server. Please check your internet connection and try again.',
+          [{ text: 'OK', style: 'cancel' }]
+        );
+      } else {
+        Alert.alert(
+          'Error',
+          'Failed to record shake. Please try again.',
+          [{ text: 'OK', style: 'cancel' }]
+        );
+      }
+    } finally {
+      inFlightRef.current = false;
     }
   };
 
-  const limitReached = dailyShakes >= DAILY_LIMIT;
+  const closeRewardPopup = () => {
+    setShowReward(false);
+    setCurrentReward(null);
+    // Stay on the Shake screen as requested
+  };
+
+  // Limit checking is handled by DashboardScreen, not here
 
   return (
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
@@ -110,32 +276,62 @@ export default function ShakeScreen({ navigation }) {
           disabled={isShaking || limitReached}
           activeOpacity={0.85}
         >
-          <Image source={require('../assets/images/gift.png')} style={[styles.shakeImage, isShaking && styles.shakeImageActive]} />
+          <Image 
+            source={require('../assets/images/gift.png')} 
+            style={[styles.shakeImage, isShaking && styles.shakeImageActive, limitReached && styles.shakeImageDisabled]} 
+          />
         </TouchableOpacity>
 
-        <View style={styles.statsCard}>
-          <View style={styles.statItem}>
-            <Text style={styles.statValue}>{dailyShakes}/{DAILY_LIMIT}</Text>
-            <Text style={styles.statLabel}>Today</Text>
-          </View>
-          <View style={styles.statDivider} />
-          <View style={styles.statItem}>
-            <Text style={styles.statValue}>{totalShakes}</Text>
-            <Text style={styles.statLabel}>Total Shakes</Text>
-          </View>
+        {/* Daily Limit Status */}
+        <View style={styles.limitNotice}>
+          <Ionicons 
+            name={limitReached ? "alert-circle" : "information-circle"} 
+            size={20} 
+            color={limitReached ? "#FF6B6B" : "#669198"} 
+          />
+          <Text style={[styles.limitText, limitReached && styles.limitTextReached]}>
+            {limitReached 
+              ? `Daily limit reached (${dailyShakes}/${dailyLimit})` 
+              : `Shakes today: ${dailyShakes}/${dailyLimit}`
+            }
+          </Text>
         </View>
 
-        {limitReached ? (
-          <View style={styles.limitNotice}>
-            <Ionicons name="information-circle-outline" size={20} color="#8A8A8E" />
-            <Text style={styles.limitText}>Daily limit reached. Come back tomorrow!</Text>
-          </View>
-        ) : null}
+        {/* Stats are handled by DashboardScreen, not shown here */}
 
         <TouchableOpacity style={styles.historyButton} onPress={() => navigation.navigate('ShakesHistory')}>
           <Text style={styles.historyButtonText}>View History</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Reward Popup Modal */}
+      <Modal
+        visible={showReward}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={closeRewardPopup}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.rewardPopup}>
+            <View style={styles.rewardHeader}>
+              <Ionicons name="gift" size={40} color="#FF6B81" />
+              <Text style={styles.rewardTitle}>Congratulations!</Text>
+            </View>
+            
+            <View style={styles.rewardContent}>
+              <Text style={styles.rewardName}>{currentReward?.name}</Text>
+              <Text style={styles.rewardDescription}>{currentReward?.description}</Text>
+            </View>
+
+            <TouchableOpacity 
+              style={styles.rewardButton}
+              onPress={closeRewardPopup}
+            >
+              <Text style={styles.rewardButtonText}>Awesome!</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       <View style={{ height: 30 }} />
     </ScrollView>
@@ -202,6 +398,9 @@ const styles = StyleSheet.create({
   shakeImageActive: {
     transform: [{ rotate: '15deg' }],
   },
+  shakeImageDisabled: {
+    opacity: 0.5,
+  },
   statsCard: {
     width: '100%',
     backgroundColor: '#FFFFFF',
@@ -256,6 +455,10 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
   },
+  limitTextReached: {
+    color: '#FF6B6B',
+    fontWeight: '600',
+  },
   historyButton: {
     marginTop: 20,
     backgroundColor: '#669198',
@@ -272,5 +475,68 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '700',
+  },
+  // Reward Popup Styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  rewardPopup: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 24,
+    width: '90%',
+    maxWidth: 350,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.25,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  rewardHeader: {
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  rewardTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#333',
+    marginTop: 10,
+  },
+  rewardContent: {
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  rewardName: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#FF6B81',
+    marginBottom: 8,
+  },
+  rewardDescription: {
+    fontSize: 16,
+    color: '#666',
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  rewardPoints: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#4CAF50',
+  },
+  rewardButton: {
+    backgroundColor: '#669198',
+    paddingHorizontal: 32,
+    paddingVertical: 12,
+    borderRadius: 25,
+  },
+  rewardButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
 });

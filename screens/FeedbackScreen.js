@@ -6,7 +6,6 @@ import { api } from '../services/api';
 
 export default function FeedbackScreen({ navigation }) {
   const [title, setTitle] = useState('');
-  const [message, setMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [category, setCategory] = useState('general');
   const [rating, setRating] = useState(0);
@@ -19,8 +18,8 @@ export default function FeedbackScreen({ navigation }) {
   ];
 
   const handleSubmit = async () => {
-    if (!title || !message) {
-      Alert.alert('Missing Information', 'Please fill out both title and message fields');
+    if (!title) {
+      Alert.alert('Missing Information', 'Please enter your message');
       return;
     }
     
@@ -32,7 +31,7 @@ export default function FeedbackScreen({ navigation }) {
     setIsSubmitting(true);
     try {
       // Submit feedback via API (works offline with mocks)
-      await api.submitFeedback({ title, message, category, rating });
+      await api.submitFeedback({ title: title, message: title, category, rating });
 
       // Log to activities via API (ignore failures)
       try {
@@ -47,7 +46,6 @@ export default function FeedbackScreen({ navigation }) {
 
       Alert.alert('Thank you!', 'Your feedback has been submitted.');
       setTitle('');
-      setMessage('');
       setRating(0);
       navigation.goBack();
     } catch (error) {
@@ -119,23 +117,13 @@ export default function FeedbackScreen({ navigation }) {
           {renderStars()}
         </View>
 
-        {/* Inputs */}
-        <Text style={styles.label}>Title</Text>
+        {/* Single input labeled Message */}
+        <Text style={styles.label}>Message</Text>
         <TextInput
           value={title}
           onChangeText={setTitle}
           style={styles.input}
-          placeholder="Feedback title"
-        />
-
-        <Text style={styles.label}>Message</Text>
-        <TextInput
-          value={message}
-          onChangeText={setMessage}
-          style={[styles.input, styles.textArea]}
           placeholder="Write your message..."
-          multiline
-          numberOfLines={6}
         />
 
         {/* Submit Button */}

@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 import { api } from '../services/api';
 
 export default function RecentActivityScreen({ navigation }) {
@@ -20,12 +21,15 @@ export default function RecentActivityScreen({ navigation }) {
     const load = async () => {
       setLoading(true);
       try {
-        const list = await api.getRecentShakeActivities({ limit: 50 });
-        const normalized = (Array.isArray(list) ? list : []).map((a, idx) => ({
-          id: String(a._id || a.id || (a.timestamp ? a.timestamp : `act-${idx}-${Date.now()}`)),
-          ...a,
-          timestamp: a.timestamp ? new Date(a.timestamp) : new Date(),
-        }));
+        const list = await api.getRecentShakeActivities({ limit: 100 });
+        const normalized = (Array.isArray(list) ? list : [])
+          .filter(a => a && a.type !== 'login' && a.type !== 'logout')
+          .map((a, idx) => ({
+            id: String(a._id || a.id || (a.timestamp ? a.timestamp : `act-${idx}-${Date.now()}`)),
+            ...a,
+            timestamp: a.timestamp ? new Date(a.timestamp) : new Date(),
+          }))
+          .sort((a, b) => b.timestamp - a.timestamp);
         if (isMounted) setActivities(normalized);
       } catch (error) {
         console.warn('Error loading activities:', error?.message || error);
@@ -40,33 +44,81 @@ export default function RecentActivityScreen({ navigation }) {
     };
   }, []);
 
+  useFocusEffect(
+    React.useCallback(() => {
+      let isActive = true;
+      const run = async () => {
+        setLoading(true);
+        try {
+          const list = await api.getRecentShakeActivities({ limit: 100 });
+          const normalized = (Array.isArray(list) ? list : [])
+            .filter(a => a && a.type !== 'login' && a.type !== 'logout')
+            .map((a, idx) => ({
+              id: String(a._id || a.id || (a.timestamp ? a.timestamp : `act-${idx}-${Date.now()}`)),
+              ...a,
+              timestamp: a.timestamp ? new Date(a.timestamp) : new Date(),
+            }))
+            .sort((a, b) => b.timestamp - a.timestamp);
+          if (isActive) setActivities(normalized);
+        } catch (error) {
+          if (isActive) setActivities([]);
+        } finally {
+          if (isActive) setLoading(false);
+        }
+      };
+      run();
+      return () => { isActive = false; };
+    }, [])
+  );
+
   const getActivityIcon = (type) => {
     switch (type) {
       case 'shake':
         return 'hand-left-outline';
-      case 'login':
-        return 'log-in-outline';
       case 'profile_update':
+      case 'profile':
+      case 'update_profile':
         return 'person-outline';
       case 'feedback':
         return 'chatbubble-outline';
+      case 'reward':
+        return 'gift-outline';
+      case 'login':
+        return 'log-in-outline';
       default:
         return 'ellipse-outline';
     }
   };
 
+  const getBackgroundColor = (type) => {
+    const colors = {
+      shake: '#E9F5FF',
+      feedback: '#FFEFCF',
+      reward: '#FFE9EC',
+      default: '#F0F0F0',
+    };
+    return colors[type] || colors.default;
+  };
+
   const getActivityText = (activity) => {
     switch (activity.type) {
       case 'shake':
+        if (activity.metadata?.reward) {
+          return `Shaked and received: ${activity.metadata.reward}`;
+        }
         return `Shaked ${activity.count || 1} time${(activity.count || 1) > 1 ? 's' : ''}`;
+      case 'feedback':
+        return activity.title ? `Feedback: ${activity.title}` : 'Feedback submitted';
+      case 'profile_update':
+      case 'profile':
+      case 'update_profile':
+        return 'Updated profile';
+      case 'reward':
+        return activity.title || activity.description || 'Reward received';
       case 'login':
         return 'Logged in';
-      case 'profile_update':
-        return 'Updated profile';
-      case 'feedback':
-        return activity.title ? `Feedback: ${activity.title}` : 'Submitted feedback';
       default:
-        return activity.title || 'Activity recorded';
+        return activity.title || activity.description || 'Activity';
     }
   };
 
@@ -99,7 +151,7 @@ export default function RecentActivityScreen({ navigation }) {
 
   const renderActivityItem = ({ item }) => (
     <View style={styles.activityItem}>
-      <View style={styles.activityIcon}>
+      <View style={[styles.activityIcon, { backgroundColor: getBackgroundColor(item.type) }]}>
         <Ionicons name={getActivityIcon(item.type)} size={22} color="#669198" />
       </View>
       <View style={styles.activityContent}>

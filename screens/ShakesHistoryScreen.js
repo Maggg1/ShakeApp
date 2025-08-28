@@ -26,11 +26,19 @@ export default function ShakesHistoryScreen({ navigation }) {
       const list = Array.isArray(data) ? data : [];
       // Ensure objects have proper Date objects and sort by timestamp desc
       const normalized = list
-        .map((s, idx) => ({
-          id: String((s.id != null ? s.id : (s.timestamp ? s.timestamp : `shake-${idx}-${Date.now()}`))),
-          ...s,
-          timestamp: new Date(s.timestamp || Date.now()),
-        }))
+        .map((s, idx) => {
+          const reward = (s.reward != null ? s.reward : (s.metadata && s.metadata.reward != null ? s.metadata.reward : (s.prize != null ? s.prize : s.rewardName)));
+          const rewardDescription = (s.rewardDescription != null ? s.rewardDescription : (s.metadata && s.metadata.rewardDescription != null ? s.metadata.rewardDescription : s.description));
+          const tsRaw = s.timestamp || s.createdAt || s.date || s.time || Date.now();
+          const ts = new Date(tsRaw);
+          return {
+            id: String((s.id != null ? s.id : (s._id != null ? s._id : (tsRaw ? tsRaw : `shake-${idx}-${Date.now()}`)))),
+            ...s,
+            reward,
+            rewardDescription,
+            timestamp: ts,
+          };
+        })
         .sort((a, b) => b.timestamp - a.timestamp);
       setShakes(normalized);
     } catch (error) {
@@ -76,8 +84,21 @@ export default function ShakesHistoryScreen({ navigation }) {
       <View style={styles.shakeInfo}>
         <Text style={styles.shakeTitle}>Shake</Text>
         <Text style={styles.shakeDate}>{formatDate(item.timestamp)}</Text>
+        {item.reward ? (
+          <View style={styles.rewardRow}>
+            <Ionicons name="gift-outline" size={14} color="#FF6B81" />
+            <Text style={styles.rewardBadgeText}>{item.reward}</Text>
+          </View>
+        ) : null}
+        {item.rewardDescription && (
+          <Text style={styles.rewardDescription}>{item.rewardDescription}</Text>
+        )}
       </View>
-      <Text style={styles.shakeCount}>+1</Text>
+      {item.reward ? (
+        <Text style={styles.rewardRight}>{item.reward}</Text>
+      ) : (
+        <Text style={styles.shakeCount}>+1</Text>
+      )}
     </View>
   );
 
@@ -206,6 +227,37 @@ const styles = StyleSheet.create({
   shakeDate: {
     fontSize: 12,
     color: '#8A8A8E',
+  },
+  rewardDescription: {
+    fontSize: 11,
+    color: '#669198',
+    fontStyle: 'italic',
+    marginTop: 2,
+  },
+  rewardRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFE9EC',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 10,
+    alignSelf: 'flex-start',
+    marginTop: 6,
+    gap: 6,
+  },
+  rewardBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FF6B81',
+  },
+  rewardRight: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FF6B81',
+    backgroundColor: '#FFE9EC',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 10,
   },
   shakeCount: {
     fontSize: 16,
