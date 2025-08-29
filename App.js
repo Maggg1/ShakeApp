@@ -14,7 +14,6 @@ import ProfileScreen from './screens/ProfileScreen';
 import EditProfileScreen from './screens/EditProfileScreen';
 import SettingsScreen from './screens/SettingsScreen';
 import FeedbackScreen from './screens/FeedbackScreen';
-import RecentActivtyScreen from './screens/RecentActivtyScreen';
 import ShakeScreen from './screens/ShakeScreen';
 import ShakesHistoryScreen from './screens/ShakesHistoryScreen';
 import HomeScreen from './screens/HomeScreen';
@@ -35,7 +34,6 @@ export default function App() {
         <Stack.Screen name="EditProfile" component={EditProfileScreen} options={{ headerShown: false}} />
         <Stack.Screen name="Settings" component={SettingsScreen} options={{ headerShown: false}} />
         <Stack.Screen name="Feedback" component={FeedbackScreen} options={{ headerShown: false}} />
-        <Stack.Screen name="RecentActivty" component={RecentActivtyScreen} options={{ headerShown: false}} />
         <Stack.Screen name="Shake" component={ShakeScreen} options={{ headerShown: false}} />
         <Stack.Screen name="ShakesHistory" component={ShakesHistoryScreen} options={{ headerShown: false}} />
         <Stack.Screen name="Home" component={HomeScreen} options={{ headerShown: false}} />

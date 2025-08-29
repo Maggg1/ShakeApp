@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,8 @@ import {
   FlatList,
   TouchableOpacity,
   Image,
+  RefreshControl,
+  ScrollView,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -14,126 +16,218 @@ import { api } from '../services/api';
 export default function ShakesHistoryScreen({ navigation }) {
   const [shakes, setShakes] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    loadShakesHistory();
-  }, []);
-
-  const loadShakesHistory = async () => {
-    setLoading(true);
+  const loadShakesHistory = useCallback(async () => {
     try {
       const data = await api.getShakes();
       const list = Array.isArray(data) ? data : [];
-      // Ensure objects have proper Date objects and sort by timestamp desc
+
+      // Normalize and process shake data
       const normalized = list
-        .map((s, idx) => {
-          const reward = (s.reward != null ? s.reward : (s.metadata && s.metadata.reward != null ? s.metadata.reward : (s.prize != null ? s.prize : s.rewardName)));
-          const rewardDescription = (s.rewardDescription != null ? s.rewardDescription : (s.metadata && s.metadata.rewardDescription != null ? s.metadata.rewardDescription : s.description));
-          const tsRaw = s.timestamp || s.createdAt || s.date || s.time || Date.now();
-          const ts = new Date(tsRaw);
+        .map((shake, idx) => {
+          // Extract reward information from API response
+          let coinAmount = 0;
+          let rewardText = '';
+          let rewardDetails = '';
+          
+          // Handle different reward formats from API
+          if (shake.details && shake.details.reward) {
+            // Handle reward object format: {reward: {name: "1 coins", ...}, summary: "Reward: 1 coins · P: 50%"}
+            const rewardObj = shake.details.reward;
+            if (typeof rewardObj === 'object') {
+              rewardText = rewardObj.name || rewardObj.title || '';
+              rewardDetails = shake.details.summary || '';
+            } else {
+              rewardText = String(rewardObj);
+              rewardDetails = shake.details.summary || '';
+            }
+          } else if (shake.reward) {
+            // Handle direct reward field
+            rewardText = String(shake.reward);
+          } else if (shake.metadata && shake.metadata.reward) {
+            // Handle metadata reward
+            rewardText = String(shake.metadata.reward);
+          }
+          
+          // Parse coin amount from reward text
+          const coinMatch = rewardText.match(/(\d+)\s*coins?/i);
+          if (coinMatch && coinMatch[1]) {
+            coinAmount = parseInt(coinMatch[1], 10);
+          } else {
+            const numberMatch = rewardText.match(/\d+/);
+            if (numberMatch) {
+              coinAmount = parseInt(numberMatch[0], 10);
+            }
+          }
+
+          const timestamp = new Date(shake.timestamp || shake.createdAt || shake.date || Date.now());
+
           return {
-            id: String((s.id != null ? s.id : (s._id != null ? s._id : (tsRaw ? tsRaw : `shake-${idx}-${Date.now()}`)))),
-            ...s,
-            reward,
-            rewardDescription,
-            timestamp: ts,
+            id: String(shake.id || shake._id || `shake-${idx}-${Date.now()}`),
+            reward: rewardText,
+            rewardDescription: rewardDetails,
+            coinAmount,
+            timestamp,
+            rawData: shake,
           };
         })
         .sort((a, b) => b.timestamp - a.timestamp);
+
       setShakes(normalized);
     } catch (error) {
       console.warn('Error loading shakes history:', error?.message || error);
       setShakes([]);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
+  }, []);
+
+  useEffect(() => {
+    loadShakesHistory();
+  }, [loadShakesHistory]);
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    loadShakesHistory();
+  }, [loadShakesHistory]);
+
+  const getRewardColor = (coinAmount) => {
+    if (coinAmount >= 50) return '#FF6B35'; // Orange for high rewards
+    if (coinAmount >= 20) return '#4CAF50'; // Green for medium rewards
+    if (coinAmount >= 10) return '#2196F3'; // Blue for decent rewards
+    return '#FF6B81'; // Pink for small rewards
+  };
+
+  const getRewardIcon = (coinAmount) => {
+    return 'gift'; // Use the same icon for all rewards
   };
 
   const formatDate = (date) => {
     if (!date) return '';
     const now = new Date();
-    const sameDay =
-      date.getFullYear() === now.getFullYear() &&
-      date.getMonth() === now.getMonth() &&
-      date.getDate() === now.getDate();
-    if (sameDay) {
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    if (date >= today) {
       return `Today, ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-    }
-    const yesterday = new Date(now);
-    yesterday.setDate(now.getDate() - 1);
-    const isYesterday =
-      date.getFullYear() === yesterday.getFullYear() &&
-      date.getMonth() === yesterday.getMonth() &&
-      date.getDate() === yesterday.getDate();
-    if (isYesterday) {
+    } else if (date >= yesterday) {
       return `Yesterday, ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    } else {
+      return date.toLocaleDateString([], {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
     }
-    return date.toLocaleDateString([], {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
   };
 
-  const renderShakeItem = ({ item, index }) => (
-    <View style={styles.shakeItem}>
-      <View style={styles.iconBg}>
-        <Image source={require('../assets/images/gift.png')} style={styles.iconImage} />
+  const groupShakesByDate = () => {
+    const groups = {};
+    shakes.forEach(shake => {
+      const dateKey = shake.timestamp.toDateString();
+      if (!groups[dateKey]) {
+        groups[dateKey] = [];
+      }
+      groups[dateKey].push(shake);
+    });
+    return groups;
+  };
+
+  const renderShakeItem = ({ item }) => {
+    const rewardColor = getRewardColor(item.coinAmount);
+    const rewardIcon = getRewardIcon(item.coinAmount);
+
+    return (
+      <View style={styles.shakeCard}>
+        <View style={[styles.iconContainer, { backgroundColor: `${rewardColor}20` }]}>
+          <Ionicons name={rewardIcon} size={24} color={rewardColor} />
+        </View>
+        
+        <View style={styles.shakeContent}>
+          <Text style={styles.shakeTitle}>Shake Reward</Text>
+          <Text style={styles.shakeTime}>{formatDate(item.timestamp)}</Text>
+          
+          {item.reward ? (
+            <Text style={styles.rewardText}>
+              {item.reward.replace(/· P: \d+%/, '').trim()}
+            </Text>
+          ) : null}
+        </View>
+
       </View>
-      <View style={styles.shakeInfo}>
-        <Text style={styles.shakeTitle}>Shake</Text>
-        <Text style={styles.shakeDate}>{formatDate(item.timestamp)}</Text>
-        {item.reward ? (
-          <View style={styles.rewardRow}>
-            <Ionicons name="gift-outline" size={14} color="#FF6B81" />
-            <Text style={styles.rewardBadgeText}>{item.reward}</Text>
-          </View>
-        ) : null}
-        {item.rewardDescription && (
-          <Text style={styles.rewardDescription}>{item.rewardDescription}</Text>
-        )}
-      </View>
-      {item.reward ? (
-        <Text style={styles.rewardRight}>{item.reward}</Text>
-      ) : (
-        <Text style={styles.shakeCount}>+1</Text>
-      )}
+    );
+  };
+
+  const renderEmptyState = () => (
+    <View style={styles.emptyContainer}>
+      <Image 
+        source={require('../assets/images/gift.png')} 
+        style={styles.emptyImage}
+      />
+      <Text style={styles.emptyTitle}>No Shakes Yet</Text>
+      <Text style={styles.emptySubtitle}>
+        Start shaking your phone to earn rewards and see them here!
+      </Text>
     </View>
   );
+
+  const renderLoadingState = () => (
+    <View style={styles.centerContainer}>
+      <Text style={styles.loadingText}>Loading your shake history...</Text>
+    </View>
+  );
+
+  if (loading) {
+    return renderLoadingState();
+  }
 
   return (
     <View style={styles.container}>
       {/* Header with Gradient */}
-      <LinearGradient colors={['#97c5cc', '#669198']} style={styles.headerGradient}>
+      <LinearGradient 
+        colors={['#97c5cc', '#669198']} 
+        style={styles.headerGradient}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 0 }}
+      >
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iconBtn}>
+          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
             <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Shake History</Text>
-          <View style={styles.iconBtn} />
+          <View style={styles.headerRight} />
         </View>
       </LinearGradient>
 
-      {loading ? (
-        <View style={styles.centerContainer}>
-          <Text style={styles.loadingText}>Loading...</Text>
-        </View>
-      ) : shakes.length === 0 ? (
-        <View style={styles.centerContainer}>
-          <Image 
-            source={require('../assets/images/gift.png')} 
-            style={styles.emptyImage}
-          />
-          <Text style={styles.emptyText}>No shakes recorded yet</Text>
-        </View>
+      {shakes.length === 0 ? (
+        renderEmptyState()
       ) : (
         <FlatList
           data={shakes}
           renderItem={renderShakeItem}
-          keyExtractor={(item, idx) => (item.id && item.id !== 'undefined' ? String(item.id) : `idx-${idx}`)}
+          keyExtractor={(item) => item.id}
           contentContainerStyle={styles.listContainer}
           showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={['#667EEA']}
+              tintColor="#667EEA"
+            />
+          }
+          ListHeaderComponent={
+            <View style={styles.statsContainer}>
+              <Text style={styles.statsTitle}>Total Shakes: {shakes.length}</Text>
+              <Text style={styles.statsSubtitle}>
+                Total Coins: {shakes.reduce((sum, shake) => sum + shake.coinAmount, 0)}
+              </Text>
+            </View>
+          }
         />
       )}
     </View>
@@ -143,7 +237,7 @@ export default function ShakesHistoryScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8F9FE',
+    backgroundColor: '#F8FAFC',
   },
   headerGradient: {
     paddingTop: 50,
@@ -155,40 +249,84 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  iconBtn: { padding: 6 },
+  backButton: {
+    padding: 8,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+  },
   headerTitle: {
-    fontSize: 20,
-    fontWeight: '700',
+    fontSize: 22,
+    fontWeight: '800',
     color: '#FFFFFF',
+    textAlign: 'center',
+  },
+  headerRight: {
+    width: 40,
   },
   centerContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 20,
+    padding: 20,
   },
   loadingText: {
-    color: '#669198',
+    color: '#667EEA',
     fontSize: 16,
     fontWeight: '600',
   },
-  emptyText: {
-    color: '#333',
-    fontSize: 16,
-    opacity: 0.8,
-    marginTop: 16,
-    fontWeight: '600',
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 40,
   },
   emptyImage: {
-    width: 80,
-    height: 80,
-    opacity: 0.5,
+    width: 120,
+    height: 120,
+    opacity: 0.7,
     resizeMode: 'contain',
+    marginBottom: 20,
+  },
+  emptyTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  emptySubtitle: {
+    fontSize: 14,
+    color: '#64748B',
+    textAlign: 'center',
+    lineHeight: 20,
   },
   listContainer: {
     padding: 20,
+    paddingTop: 0,
   },
-  shakeItem: {
+  statsContainer: {
+    backgroundColor: '#FFFFFF',
+    padding: 20,
+    borderRadius: 16,
+    marginBottom: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  statsTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1E293B',
+    marginBottom: 4,
+  },
+  statsSubtitle: {
+    fontSize: 16,
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  shakeCard: {
     backgroundColor: '#FFFFFF',
     padding: 16,
     borderRadius: 16,
@@ -201,67 +339,49 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 2,
   },
-  iconBg: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(102,145,152,0.12)',
+  iconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 12,
+    marginRight: 16,
   },
-  iconImage: {
-    width: 22,
-    height: 22,
-    resizeMode: 'contain',
-  },
-  shakeInfo: {
+  shakeContent: {
     flex: 1,
   },
   shakeTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#333',
-    marginBottom: 4,
-  },
-  shakeDate: {
-    fontSize: 12,
-    color: '#8A8A8E',
-  },
-  rewardDescription: {
-    fontSize: 11,
-    color: '#669198',
-    fontStyle: 'italic',
-    marginTop: 2,
-  },
-  rewardRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFE9EC',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 10,
-    alignSelf: 'flex-start',
-    marginTop: 6,
-    gap: 6,
-  },
-  rewardBadgeText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#FF6B81',
-  },
-  rewardRight: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#FF6B81',
-    backgroundColor: '#FFE9EC',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 10,
-  },
-  shakeCount: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#4A80F0',
+    color: '#1E293B',
+    marginBottom: 4,
+  },
+  shakeTime: {
+    fontSize: 12,
+    color: '#64748B',
+    marginBottom: 4,
+  },
+  rewardText: {
+    fontSize: 12,
+    color: '#94A3B8',
+    fontStyle: 'italic',
+  },
+  rewardDescription: {
+    fontSize: 12,
+    color: '#94A3B8',
+    fontStyle: 'italic',
+  },
+  rewardBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(102, 126, 234, 0.1)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+    gap: 4,
+  },
+  coinAmount: {
+    fontSize: 14,
+    fontWeight: '700',
   },
 });

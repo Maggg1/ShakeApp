@@ -30,9 +30,26 @@ let MOCK_USER = {
   totalShakes: 0,
   dailyShakes: 0,
   createdAt: todayISO(),
+  lastResetDate: new Date().toDateString(), // Track last reset date
 };
 let MOCK_SHAKES = [];
 let MOCK_ACTIVITIES = [];
+
+// Daily reset function for offline mode
+const checkAndResetDailyShakes = () => {
+  const today = new Date().toDateString();
+  if (MOCK_USER.lastResetDate !== today) {
+    console.log('[api] Resetting daily shakes for new day:', today);
+    MOCK_USER.dailyShakes = 0;
+    MOCK_USER.lastResetDate = today;
+    
+    // Also filter out shakes from previous days to keep MOCK_SHAKES clean
+    const todayDateStr = new Date().toISOString().split('T')[0];
+    MOCK_SHAKES = MOCK_SHAKES.filter(shake => 
+      shake.timestamp && shake.timestamp.startsWith(todayDateStr)
+    );
+  }
+};
 
 // Auth token storage
 const TOKEN_KEY = '@api_token_v1';
@@ -340,6 +357,7 @@ async function register({ name, email, password }) {
 async function getCurrentUser() {
   if (OFFLINE_MODE) {
     await delay(150);
+    checkAndResetDailyShakes(); // Check for daily reset before returning user data
     return { ...MOCK_USER };
   }
   const remote = await tryFetchPaths(['/api/auth/me'], { method: 'GET' });
@@ -563,6 +581,9 @@ async function getShakes({ from, to, date } = {}) {
 }
 
 async function getShakesToday() {
+  if (OFFLINE_MODE) {
+    checkAndResetDailyShakes(); // Check for daily reset before returning today's shakes
+  }
   const today = new Date();
   const yyyy = today.getFullYear();
   const mm = String(today.getMonth() + 1).padStart(2, '0');

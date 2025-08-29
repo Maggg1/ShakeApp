@@ -208,7 +208,14 @@ export default function ShakeScreen({ navigation }) {
       setShowReward(true);
 
       // Small visual feedback delay
-      setTimeout(() => setIsShaking(false), 600);
+      setTimeout(() => {
+        setIsShaking(false);
+        // Hide reward after a few seconds
+        setTimeout(() => {
+          setShowReward(false);
+          setCurrentReward(null);
+        }, 3000); // Keep reward visible for 3 seconds
+      }, 600);
     } catch (e) {
       console.error('Shake failed:', e);
       setIsShaking(false);
@@ -249,7 +256,6 @@ export default function ShakeScreen({ navigation }) {
   const closeRewardPopup = () => {
     setShowReward(false);
     setCurrentReward(null);
-    // Stay on the Shake screen as requested
   };
 
   // Limit checking is handled by DashboardScreen, not here
@@ -281,6 +287,17 @@ export default function ShakeScreen({ navigation }) {
             style={[styles.shakeImage, isShaking && styles.shakeImageActive, limitReached && styles.shakeImageDisabled]} 
           />
         </TouchableOpacity>
+
+        {/* Reward Display */}
+        {showReward && currentReward && (
+          <View style={styles.rewardContainer}>
+            <Ionicons name="gift" size={30} color="#FF6B81" />
+            <View style={styles.rewardTextContainer}>
+              <Text style={styles.rewardName}>{currentReward.name}</Text>
+              <Text style={styles.rewardDescription}>{currentReward.description}</Text>
+            </View>
+          </View>
+        )}
 
         {/* Daily Limit Status */}
         <View style={styles.limitNotice}>
@@ -400,6 +417,24 @@ const styles = StyleSheet.create({
   },
   shakeImageDisabled: {
     opacity: 0.5,
+  },
+  rewardContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 16,
+    marginVertical: 20,
+    shadowColor: '#FF6B81',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 5,
+    width: '100%',
+  },
+  rewardTextContainer: {
+    marginLeft: 12,
+    flex: 1,
   },
   statsCard: {
     width: '100%',

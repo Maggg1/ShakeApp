@@ -13,6 +13,20 @@ export default function DashboardScreen({ navigation }) {
   const [dailyShakes, setDailyShakes] = useState(0);
   const [recentActivities, setRecentActivities] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [timeUntilReset, setTimeUntilReset] = useState('');
+
+  const calculateTimeUntilReset = useCallback(() => {
+    const now = new Date();
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(0, 0, 0, 0); // Midnight
+    
+    const timeDiff = tomorrow.getTime() - now.getTime();
+    const hours = Math.floor(timeDiff / (1000 * 60 * 60));
+    const minutes = Math.floor((timeDiff % (1000 * 60 * 60)) / (1000 * 60));
+    
+    return `${hours}h ${minutes}m`;
+  }, []);
 
   const fetchUserData = useCallback(async () => {
     try {
@@ -54,11 +68,34 @@ export default function DashboardScreen({ navigation }) {
           setTotalShakes(0);
           setDailyShakes(0);
         }
+
+        // Update reset timer
+        setTimeUntilReset(calculateTimeUntilReset());
       }
     } catch (error) {
       console.error("Error fetching user data:", error);
     }
-  }, []);
+  }, [calculateTimeUntilReset]);
+
+  // Function to parse reward text and extract coin amount
+  const parseRewardText = (rewardText) => {
+    if (!rewardText) return null;
+    
+    // Try to extract coin amount from common reward formats
+    const coinMatch = rewardText.match(/(\d+)\s*coins?/i);
+    if (coinMatch && coinMatch[1]) {
+      return `received ${coinMatch[1]} coins`;
+    }
+    
+    // Try to extract any number from the reward text
+    const numberMatch = rewardText.match(/\d+/);
+    if (numberMatch) {
+      return `received ${numberMatch[0]} coins`;
+    }
+    
+    // Fallback: use the original text
+    return `received ${rewardText}`;
+  };
 
   const fetchRecentActivities = useCallback(async () => {
     try {
@@ -85,12 +122,16 @@ export default function DashboardScreen({ navigation }) {
           
           // Generate fallback ID more robustly
           const fallbackId = activity._id || activity.id || (timestamp ? timestamp.getTime() : `idx-${i}`);
-          
+
           let title = '';
           switch (activity.type) {
             case 'shake':
               if (activity.details && activity.details.reward) {
-                title = `Shaked and received: ${activity.details.reward.name}`;
+                const rewardText = parseRewardText(activity.details.reward.name || activity.details.reward);
+                title = `Shaked and ${rewardText}`;
+              } else if (activity.reward) {
+                const rewardText = parseRewardText(activity.reward);
+                title = `Shaked and ${rewardText}`;
               } else {
                 title = 'Shake';
               }
@@ -195,7 +236,7 @@ export default function DashboardScreen({ navigation }) {
   const getIconForType = (type) => {
     switch (type) {
       case 'shake':
-        return 'hand-left-outline';
+        return 'gift-outline'; // Changed from 'hand-left-outline' to 'gift-outline'
       case 'profile_update':
       case 'profile':
       case 'update_profile':
@@ -291,6 +332,12 @@ export default function DashboardScreen({ navigation }) {
             <Text style={styles.statLabel}>Today</Text>
           </View>
         </View>
+        
+        <View style={styles.resetTimerContainer}>
+          <Text style={styles.resetTimerText}>
+            Reset in: {timeUntilReset}
+          </Text>
+        </View>
       </LinearGradient>
 
       {/* Quick Actions */}
@@ -331,9 +378,6 @@ export default function DashboardScreen({ navigation }) {
       {/* Recent Activity */}
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>Recent Activity</Text>
-        <TouchableOpacity onPress={() => navigation.navigate('RecentActivty')}>
-          <Text style={{ fontSize: 14, color: '#4A80F0', fontWeight: '600' }}>See more</Text>
-        </TouchableOpacity>
       </View>
 
       <View style={styles.activityList}>
@@ -570,5 +614,14 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#8A8A8E',
     marginTop: 6,
+  },
+  resetTimerContainer: {
+    marginTop: 12,
+    alignItems: 'center',
+  },
+  resetTimerText: {
+    fontSize: 12,
+    color: 'rgba(255, 255, 255, 0.9)',
+    fontWeight: '600',
   },
 });

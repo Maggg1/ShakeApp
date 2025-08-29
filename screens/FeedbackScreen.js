@@ -1,14 +1,15 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, Alert, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, Alert, StyleSheet, ScrollView, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { api } from '../services/api';
 
 export default function FeedbackScreen({ navigation }) {
-  const [title, setTitle] = useState('');
+  const [message, setMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [category, setCategory] = useState('general');
   const [rating, setRating] = useState(0);
+  const [showValidation, setShowValidation] = useState(false);
   
   const categories = [
     { id: 'general', label: 'General', icon: 'chat' },
@@ -18,8 +19,10 @@ export default function FeedbackScreen({ navigation }) {
   ];
 
   const handleSubmit = async () => {
-    if (!title) {
-      Alert.alert('Missing Information', 'Please enter your message');
+    setShowValidation(true);
+    
+    if (!message.trim()) {
+      Alert.alert('Missing Information', 'Please enter your feedback message');
       return;
     }
     
@@ -31,26 +34,33 @@ export default function FeedbackScreen({ navigation }) {
     setIsSubmitting(true);
     try {
       // Submit feedback via API (works offline with mocks)
-      await api.submitFeedback({ title: title, message: title, category, rating });
+      await api.submitFeedback({ 
+        title: message.substring(0, 50) + (message.length > 50 ? '...' : ''), 
+        message: message, 
+        category, 
+        rating 
+      });
 
       // Log to activities via API (ignore failures)
       try {
         await api.logActivity({
           type: 'feedback',
-          description: `${category} feedback submitted: ${title}`,
-          metadata: { rating },
+          description: `${category} feedback submitted`,
+          metadata: { rating, category },
         });
       } catch (e) {
         console.warn('Could not create feedback activity:', e?.message || e);
       }
 
-      Alert.alert('Thank you!', 'Your feedback has been submitted.');
-      setTitle('');
+      Alert.alert('Thank you!', 'Your feedback has been submitted successfully. We appreciate your input!');
+      setMessage('');
       setRating(0);
+      setCategory('general');
+      setShowValidation(false);
       navigation.goBack();
     } catch (error) {
       console.error('Feedback submit error:', error);
-      Alert.alert('Error', 'Something went wrong. Try again.');
+      Alert.alert('Error', 'Something went wrong while submitting your feedback. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
@@ -60,11 +70,16 @@ export default function FeedbackScreen({ navigation }) {
     const stars = [];
     for (let i = 1; i <= 5; i++) {
       stars.push(
-        <TouchableOpacity key={i} onPress={() => setRating(i)} style={styles.starContainer}>
+        <TouchableOpacity 
+          key={i} 
+          onPress={() => setRating(i)} 
+          style={styles.starContainer}
+          activeOpacity={0.7}
+        >
           <Ionicons 
             name={i <= rating ? 'star' : 'star-outline'} 
-            size={32} 
-            color={i <= rating ? '#FFD700' : '#BBBBBB'} 
+            size={36} 
+            color={i <= rating ? '#FFD700' : '#CCCCCC'} 
           />
         </TouchableOpacity>
       );
@@ -72,74 +87,112 @@ export default function FeedbackScreen({ navigation }) {
     return stars;
   };
 
+  const getRatingLabel = () => {
+    const labels = ['', 'Poor', 'Fair', 'Good', 'Very Good', 'Excellent'];
+    return rating > 0 ? labels[rating] : 'Select rating';
+  };
+
   return (
-    <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
-      {/* Header with Gradient */}
-      <LinearGradient
-        colors={['#97c5cc', '#669198']}
-        style={styles.headerGradient}
-      >
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-            <Ionicons name="arrow-back" size={24} color="white" />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Send Feedback</Text>
-          <View style={{ width: 24 }}></View>
-        </View>
-      </LinearGradient>
-
-
-      <View style={styles.contentContainer}>
-        {/* Category Selection */}
-        <Text style={styles.sectionTitle}>Category</Text>
-        <View style={styles.categoryContainer}>
-          {categories.map((cat) => (
-            <TouchableOpacity 
-              key={cat.id} 
-              style={[styles.categoryButton, category === cat.id ? styles.categoryButtonActive : null]}
-              onPress={() => setCategory(cat.id)}
-            >
-              <MaterialIcons 
-                name={cat.icon} 
-                size={20} 
-                color={category === cat.id ? '#FFFFFF' : '#555555'} 
-              />
-              <Text style={[styles.categoryText, category === cat.id ? styles.categoryTextActive : null]}>
-                {cat.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        {/* Rating */}
-        <Text style={styles.sectionTitle}>Rating</Text>
-        <View style={styles.ratingContainer}>
-          {renderStars()}
-        </View>
-
-        {/* Single input labeled Message */}
-        <Text style={styles.label}>Message</Text>
-        <TextInput
-          value={title}
-          onChangeText={setTitle}
-          style={styles.input}
-          placeholder="Write your message..."
-        />
-
-        {/* Submit Button */}
-        <TouchableOpacity
-          style={[styles.button, isSubmitting && styles.buttonDisabled]}
-          onPress={handleSubmit}
-          disabled={isSubmitting}
+    <KeyboardAvoidingView 
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    >
+      <ScrollView showsVerticalScrollIndicator={false}>
+        {/* Header with Gradient */}
+        <LinearGradient
+          colors={['#97c5cc', '#669198']}
+          style={styles.headerGradient}
         >
-          {isSubmitting ? (
-            <ActivityIndicator color="#FFFFFF" size="small" />
-          ) : (
-            <Text style={styles.buttonText}>Submit Feedback</Text>
+          <View style={styles.header}>
+            <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+              <Ionicons name="arrow-back" size={24} color="white" />
+            </TouchableOpacity>
+            <Text style={styles.headerTitle}>Send Feedback</Text>
+            <View style={{ width: 24 }}></View>
+          </View>
+        </LinearGradient>
+
+        <View style={styles.contentContainer}>
+          {/* Category Selection */}
+          <Text style={styles.sectionTitle}>What type of feedback is this?</Text>
+          <View style={styles.categoryContainer}>
+            {categories.map((cat) => (
+              <TouchableOpacity 
+                key={cat.id} 
+                style={[
+                  styles.categoryButton, 
+                  category === cat.id ? styles.categoryButtonActive : null,
+                  showValidation && category === cat.id ? styles.categoryButtonSelected : null
+                ]}
+                onPress={() => setCategory(cat.id)}
+              >
+                <MaterialIcons 
+                  name={cat.icon} 
+                  size={20} 
+                  color={category === cat.id ? '#FFFFFF' : '#555555'} 
+                />
+                <Text style={[styles.categoryText, category === cat.id ? styles.categoryTextActive : null]}>
+                  {cat.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {/* Rating */}
+          <Text style={styles.sectionTitle}>How would you rate your experience?</Text>
+          <View style={styles.ratingSection}>
+            <View style={styles.ratingContainer}>
+              {renderStars()}
+            </View>
+            <Text style={[
+              styles.ratingLabel,
+              showValidation && rating === 0 ? styles.validationError : null
+            ]}>
+              {getRatingLabel()}
+            </Text>
+          </View>
+
+          {/* Message Input */}
+          <Text style={styles.label}>Your Feedback</Text>
+          <TextInput
+            value={message}
+            onChangeText={setMessage}
+            style={[
+              styles.input,
+              styles.textArea,
+              showValidation && !message.trim() ? styles.validationError : null
+            ]}
+            placeholder="Please share your thoughts, suggestions, or report any issues..."
+            placeholderTextColor="#999"
+            multiline
+            numberOfLines={6}
+            textAlignVertical="top"
+          />
+          {showValidation && !message.trim() && (
+            <Text style={styles.errorText}>Please enter your feedback message</Text>
           )}
-        </TouchableOpacity>
-      </View>
-    </ScrollView>
+
+          {/* Submit Button */}
+          <TouchableOpacity
+            style={[
+              styles.button, 
+              isSubmitting && styles.buttonDisabled,
+              (!message.trim() || rating === 0) && styles.buttonDisabled
+            ]}
+            onPress={handleSubmit}
+            disabled={isSubmitting || !message.trim() || rating === 0}
+          >
+            {isSubmitting ? (
+              <ActivityIndicator color="#FFFFFF" size="small" />
+            ) : (
+              <Text style={styles.buttonText}>
+                {!message.trim() || rating === 0 ? 'Complete all fields' : 'Submit Feedback'}
+              </Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 const styles = StyleSheet.create({
@@ -181,21 +234,27 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'space-between',
-    marginBottom: 10,
+    marginBottom: 20,
   },
   categoryButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#F0F2F5',
-    paddingVertical: 10,
+    paddingVertical: 12,
     paddingHorizontal: 12,
-    borderRadius: 8,
+    borderRadius: 10,
     marginBottom: 10,
     width: '48%',
+    borderWidth: 2,
+    borderColor: 'transparent',
   },
   categoryButtonActive: {
     backgroundColor: '#669198',
+    borderColor: '#4A80F0',
+  },
+  categoryButtonSelected: {
+    borderColor: '#4A80F0',
   },
   categoryText: {
     marginLeft: 6,
@@ -206,19 +265,29 @@ const styles = StyleSheet.create({
   categoryTextActive: {
     color: '#FFFFFF',
   },
+  ratingSection: {
+    marginBottom: 20,
+    alignItems: 'center',
+  },
   ratingContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 20,
+    marginBottom: 8,
   },
   starContainer: {
-    padding: 5,
+    padding: 8,
+  },
+  ratingLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#666',
+    textAlign: 'center',
   },
   label: {
     fontSize: 14,
     color: '#555',
-    marginBottom: 6,
+    marginBottom: 8,
     marginTop: 12,
     fontWeight: '500',
   },
@@ -260,5 +329,15 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: '700',
     fontSize: 16,
+  },
+  validationError: {
+    borderColor: '#FF6B6B',
+    backgroundColor: '#FFF5F5',
+  },
+  errorText: {
+    color: '#FF6B6B',
+    fontSize: 12,
+    marginTop: 4,
+    marginLeft: 4,
   },
 });
