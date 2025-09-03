@@ -15,7 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Accelerometer } from 'expo-sensors';
 import { Platform } from 'react-native';
 import { api } from '../services/api';
-import AsyncStorage from '@react-native-async-storage/async-storage'; // <-- added
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function ShakeScreen({ navigation }) {
 
