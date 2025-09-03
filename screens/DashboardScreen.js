@@ -1,6 +1,6 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image, Alert, Dimensions, RefreshControl } from 'react-native';
-import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { api } from '../services/api';
 import { avatars } from '../assets/avatars';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -79,22 +79,20 @@ export default function DashboardScreen({ navigation }) {
 
   // Function to parse reward text and extract coin amount
   const parseRewardText = (rewardText) => {
-    if (!rewardText) return null;
-    
+    if (rewardText == null) return null;
+    const txt = String(rewardText);
     // Try to extract coin amount from common reward formats
-    const coinMatch = rewardText.match(/(\d+)\s*coins?/i);
+    const coinMatch = txt.match(/(\d+)\s*coins?/i);
     if (coinMatch && coinMatch[1]) {
       return `received ${coinMatch[1]} coins`;
     }
-    
     // Try to extract any number from the reward text
-    const numberMatch = rewardText.match(/\d+/);
+    const numberMatch = txt.match(/\d+/);
     if (numberMatch) {
       return `received ${numberMatch[0]} coins`;
     }
-    
     // Fallback: use the original text
-    return `received ${rewardText}`;
+    return `received ${txt}`;
   };
 
   const fetchRecentActivities = useCallback(async () => {
@@ -110,46 +108,56 @@ export default function DashboardScreen({ navigation }) {
           // Handle timestamp parsing more robustly
           let timestamp = null;
           const timestampSource = activity.timestamp || activity.createdAt || activity.updatedAt;
-          if (timestampSource) {
-            if (typeof timestampSource === 'string' || typeof timestampSource === 'number') {
-              timestamp = new Date(timestampSource);
+          if (timestampSource != null) {
+            // Numbers may be epoch seconds or ms; strings may be ISO or numeric
+            if (typeof timestampSource === 'number') {
+              // treat < 1e12 as seconds
+              timestamp = new Date(timestampSource < 1e12 ? timestampSource * 1000 : timestampSource);
+            } else if (typeof timestampSource === 'string') {
+              // numeric string?
+              const numeric = Number(timestampSource);
+              if (!Number.isNaN(numeric)) {
+                timestamp = new Date(numeric < 1e12 ? numeric * 1000 : numeric);
+              } else {
+                timestamp = new Date(timestampSource);
+              }
             } else if (timestampSource && timestampSource.seconds) {
               timestamp = new Date(timestampSource.seconds * 1000);
             } else if (timestampSource instanceof Date) {
               timestamp = timestampSource;
             }
           }
-          
-          // Generate fallback ID more robustly
-          const fallbackId = activity._id || activity.id || (timestamp ? timestamp.getTime() : `idx-${i}`);
-
-          let title = '';
-          switch (activity.type) {
-            case 'shake':
-              if (activity.details && activity.details.reward) {
-                const rewardText = parseRewardText(activity.details.reward.name || activity.details.reward);
-                title = `Shaked and ${rewardText}`;
-              } else if (activity.reward) {
-                const rewardText = parseRewardText(activity.reward);
-                title = `Shaked and ${rewardText}`;
-              } else {
-                title = 'Shake';
-              }
-              break;
-            case 'feedback':
-              title = activity.title ? `Feedback: ${activity.title}` : 'Feedback submitted';
-              break;
-            case 'profile_update':
-            case 'profile':
-            case 'update_profile':
-              title = 'Profile updated';
-              break;
-            case 'reward':
-              title = activity.title || activity.description || 'Reward received';
-              break;
-            default:
-              title = activity.title || activity.description || 'Activity';
-          }
+           
+           // Generate fallback ID more robustly
+           const fallbackId = activity._id || activity.id || (timestamp ? timestamp.getTime() : `idx-${i}`);
+ 
+           let title = '';
+           switch (activity.type) {
+             case 'shake':
+               if (activity.details && activity.details.reward) {
+                 const rewardText = parseRewardText(activity.details.reward.name || activity.details.reward);
+                 title = `Shaked and ${rewardText}`;
+               } else if (activity.reward) {
+                 const rewardText = parseRewardText(activity.reward);
+                 title = `Shaked and ${rewardText}`;
+               } else {
+                 title = 'Shake';
+               }
+               break;
+             case 'feedback':
+               title = activity.title ? `Feedback: ${activity.title}` : 'Feedback submitted';
+               break;
+             case 'profile_update':
+             case 'profile':
+             case 'update_profile':
+               title = 'Profile updated';
+               break;
+             case 'reward':
+               title = activity.title || activity.description || 'Reward received';
+               break;
+             default:
+               title = activity.title || activity.description || 'Activity';
+           }
           
           return { 
             id: String(fallbackId), 
@@ -188,7 +196,14 @@ export default function DashboardScreen({ navigation }) {
     console.log('Dashboard focused - refreshing data');
     fetchUserData();
     fetchRecentActivities();
-  }, []));
+  }, [fetchUserData, fetchRecentActivities]));
+
+  // Keep reset timer updated every minute
+  useEffect(() => {
+    setTimeUntilReset(calculateTimeUntilReset());
+    const id = setInterval(() => setTimeUntilReset(calculateTimeUntilReset()), 60_000);
+    return () => clearInterval(id);
+  }, [calculateTimeUntilReset]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);

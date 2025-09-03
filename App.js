@@ -3,6 +3,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { StatusBar } from 'expo-status-bar';
 import { View, Text } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import LoginScreen from './screens/LoginScreen';
 import SignupScreen from './screens/SignupScreen';
@@ -19,6 +20,51 @@ import ShakesHistoryScreen from './screens/ShakesHistoryScreen';
 import HomeScreen from './screens/HomeScreen';
 
 const Stack = createStackNavigator();
+
+const MAX_SHAKES_PER_DAY = 5;
+
+function todayKey() {
+    // use YYYY-MM-DD so timezone-day comparisons work
+    return new Date().toISOString().slice(0, 10);
+}
+
+async function loadShakes() {
+    // AsyncStorage.getItem for RN, or localStorage.getItem for web
+    const raw = await AsyncStorage.getItem('shakes'); // or localStorage.getItem('shakes')
+    const data = raw ? JSON.parse(raw) : { remaining: MAX_SHAKES_PER_DAY, lastReset: todayKey() };
+
+    const today = todayKey();
+    if (data.lastReset !== today) {
+        // new day -> reset
+        data.remaining = MAX_SHAKES_PER_DAY;
+        data.lastReset = today;
+        await AsyncStorage.setItem('shakes', JSON.stringify(data)); // or localStorage.setItem(...)
+    }
+
+    return data.remaining;
+}
+
+async function useShake() {
+    const raw = await AsyncStorage.getItem('shakes');
+    const data = raw ? JSON.parse(raw) : { remaining: MAX_SHAKES_PER_DAY, lastReset: todayKey() };
+
+    const today = todayKey();
+    if (data.lastReset !== today) {
+        data.remaining = MAX_SHAKES_PER_DAY;
+        data.lastReset = today;
+    }
+
+    if (data.remaining <= 0) return false; // no shakes left
+
+    data.remaining -= 1;
+    await AsyncStorage.setItem('shakes', JSON.stringify(data));
+    return true;
+}
+
+// Ensure to call this on app start / when returning from background:
+async function checkDailyReset() {
+    await loadShakes(); // will reset if date changed
+}
 
 export default function App() {
   return (

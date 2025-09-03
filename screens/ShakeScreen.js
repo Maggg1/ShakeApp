@@ -8,12 +8,14 @@ import {
   Image,
   ScrollView,
   Modal,
+  AppState,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { Accelerometer } from 'expo-sensors';
 import { Platform } from 'react-native';
 import { api } from '../services/api';
+import AsyncStorage from '@react-native-async-storage/async-storage'; // <-- added
 
 export default function ShakeScreen({ navigation }) {
 
@@ -30,9 +32,15 @@ export default function ShakeScreen({ navigation }) {
   const lastMagRef = useRef(0);
   const lastTriggerRef = useRef(0);
 
-  // Fetch today's shake count on mount
+  const STORAGE_KEY = 'shake_meta'; // <-- added
+  const todayKey = () => new Date().toISOString().slice(0, 10); // <-- added
+
+  // Ensure local daily reset on app start (handles client-side fallback)
   useEffect(() => {
-    fetchTodayShakes();
+    (async () => {
+      await ensureDailyReset(); // <-- added
+      await fetchTodayShakes();
+    })();
   }, []);
 
   // Accelerometer-based shake detection with threshold and debounce
@@ -101,17 +109,41 @@ export default function ShakeScreen({ navigation }) {
     };
   }, [limitReached, isShaking]);
 
+  const ensureDailyReset = async () => { // <-- added
+    try {
+      const raw = await AsyncStorage.getItem(STORAGE_KEY);
+      const meta = raw ? JSON.parse(raw) : { lastReset: todayKey() };
+      const today = todayKey();
+      if (meta.lastReset !== today) {
+        // reset local UI state for a new day
+        setDailyShakes(0);
+        setLimitReached(false);
+        meta.lastReset = today;
+        await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(meta));
+      }
+    } catch (err) {
+      console.warn('ensureDailyReset error:', err);
+    }
+  };
+
   const fetchTodayShakes = async () => {
     try {
       const todayShakes = await api.getShakesToday();
       const count = Array.isArray(todayShakes) ? todayShakes.length : 0;
       setDailyShakes(count);
       setLimitReached(count >= dailyLimit);
+
+      // Persist that we've synced for today so client won't show stale limit next day
+      try {
+        await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify({ lastReset: todayKey() }));
+      } catch (e) {
+        // non-fatal
+      }
     } catch (error) {
       console.error('Error fetching today\'s shakes:', error);
     }
   };
-
+  
   // Don't fetch statistics on mount - DashboardScreen handles this
   // We'll update local state when shakes are recorded
 
@@ -257,6 +289,47 @@ export default function ShakeScreen({ navigation }) {
     setShowReward(false);
     setCurrentReward(null);
   };
+
+  // call ensureDailyReset() when app becomes active (resume) so client won't show stale limit
+  useEffect(() => {
+    const handleAppStateChange = (nextAppState) => {
+      if (nextAppState === 'active') {
+        ensureDailyReset().catch(() => {});
+        fetchTodayShakes().catch(() => {});
+      }
+    };
+
+    const sub = AppState.addEventListener ? AppState.addEventListener('change', handleAppStateChange) : AppState.addEventListener('change', handleAppStateChange);
+
+    return () => {
+      try {
+        if (sub && sub.remove) sub.remove();
+        else AppState.removeEventListener && AppState.removeEventListener('change', handleAppStateChange);
+      } catch (e) {
+        // ignore
+      }
+    };
+  }, []);
+
+  // schedule a single timer to run shortly after midnight each day (keeps UI in sync while app runs)
+  useEffect(() => {
+    let timeoutId = null;
+    const scheduleMidnight = () => {
+      const now = new Date();
+      const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 5); // 5s after midnight
+      const ms = Math.max(0, nextMidnight.getTime() - now.getTime());
+      timeoutId = setTimeout(async () => {
+        await ensureDailyReset().catch(() => {});
+        await fetchTodayShakes().catch(() => {});
+        scheduleMidnight(); // reschedule for next day
+      }, ms);
+    };
+
+    scheduleMidnight();
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, []);
 
   // Limit checking is handled by DashboardScreen, not here
 
