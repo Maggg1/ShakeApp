@@ -109,16 +109,15 @@ export default function ShakeScreen({ navigation }) {
     };
   }, [limitReached, isShaking]);
 
-  const ensureDailyReset = async () => { // <-- added
+  const ensureDailyReset = async () => {
     try {
       const raw = await AsyncStorage.getItem(STORAGE_KEY);
-      const meta = raw ? JSON.parse(raw) : { lastReset: todayKey() };
-      const today = todayKey();
-      if (meta.lastReset !== today) {
-        // reset local UI state for a new day
+      const meta = raw ? JSON.parse(raw) : {};
+      const todayISO = todayKey();
+      if (meta.lastResetISO !== todayISO) {
         setDailyShakes(0);
         setLimitReached(false);
-        meta.lastReset = today;
+        meta.lastResetISO = todayISO;
         await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(meta));
       }
     } catch (err) {
@@ -132,15 +131,8 @@ export default function ShakeScreen({ navigation }) {
       const count = Array.isArray(todayShakes) ? todayShakes.length : 0;
       setDailyShakes(count);
       setLimitReached(count >= dailyLimit);
-
-      // Persist that we've synced for today so client won't show stale limit next day
-      try {
-        await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify({ lastReset: todayKey() }));
-      } catch (e) {
-        // non-fatal
-      }
     } catch (error) {
-      console.error('Error fetching today\'s shakes:', error);
+      console.error("Error fetching today's shakes:", error);
     }
   };
   
@@ -201,24 +193,7 @@ export default function ShakeScreen({ navigation }) {
       return;
     }
 
-    // Server-synced pre-check to avoid races with other devices/sessions
-    try {
-      const todayShakes = await api.getShakesToday();
-      const currentCount = Array.isArray(todayShakes) ? todayShakes.length : 0;
-      if (currentCount >= dailyLimit) {
-        setDailyShakes(currentCount);
-        setLimitReached(true);
-        Alert.alert(
-          'Daily Limit Reached',
-          `You've reached your daily limit of ${dailyLimit} shakes. Come back tomorrow to shake again!`,
-          [{ text: 'OK', style: 'cancel' }]
-        );
-        return;
-      }
-    } catch (_) {
-      // If pre-check fails, continue; backend will enforce if necessary
-    }
-
+    
     inFlightRef.current = true;
     setIsShaking(true);
     try {

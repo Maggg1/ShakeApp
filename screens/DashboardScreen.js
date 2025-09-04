@@ -1,10 +1,11 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image, Alert, Dimensions, RefreshControl } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image, Alert, Dimensions, RefreshControl, AppState } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '../services/api';
 import { avatars } from '../assets/avatars';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function DashboardScreen({ navigation }) {
   const [username, setUsername] = useState('User');
@@ -15,24 +16,81 @@ export default function DashboardScreen({ navigation }) {
   const [refreshing, setRefreshing] = useState(false);
   const [timeUntilReset, setTimeUntilReset] = useState('');
 
+  // Add local state for last reset date to track daily reset
+  const [lastResetDate, setLastResetDate] = useState(null);
+
+  const STORAGE_KEY = 'dashboard_last_reset_date';
+
   const calculateTimeUntilReset = useCallback(() => {
     const now = new Date();
     const tomorrow = new Date(now);
     tomorrow.setDate(tomorrow.getDate() + 1);
     tomorrow.setHours(0, 0, 0, 0); // Midnight
-    
+
     const timeDiff = tomorrow.getTime() - now.getTime();
     const hours = Math.floor(timeDiff / (1000 * 60 * 60));
     const minutes = Math.floor((timeDiff % (1000 * 60 * 60)) / (1000 * 60));
-    
+
     return `${hours}h ${minutes}m`;
+  }, []);
+
+  // Function to check and reset daily shakes if date changed locally
+  const checkAndResetDailyShakes = useCallback(async () => {
+    try {
+      const todayISO = new Date().toISOString().slice(0, 10);
+      const storedRaw = await AsyncStorage.getItem(STORAGE_KEY);
+      let storedISO = null;
+
+      if (storedRaw) {
+        try {
+          const parsed = JSON.parse(storedRaw);
+          storedISO = parsed?.lastResetISO || null;
+        } catch (_) {
+          // Backward compatibility: legacy plain string like toDateString
+          const legacyToday = new Date().toDateString();
+          if (storedRaw === legacyToday) storedISO = todayISO;
+        }
+      }
+
+      if (storedISO !== todayISO) {
+        console.log('[Dashboard] New day detected, resetting daily shakes');
+        setDailyShakes(0);
+        setLastResetDate(todayISO);
+        await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify({ lastResetISO: todayISO }));
+
+        // Also update the local storage that ShakeScreen uses (unified key)
+        try {
+          const shakeKey = 'shake_meta';
+          const raw = await AsyncStorage.getItem(shakeKey);
+          const meta = raw ? JSON.parse(raw) : {};
+          meta.lastResetISO = todayISO;
+          await AsyncStorage.setItem(shakeKey, JSON.stringify(meta));
+        } catch (e) {
+          console.warn('[Dashboard] Error updating shake meta:', e);
+        }
+
+        // Reset local fallback counters
+        try {
+          await AsyncStorage.setItem('local_daily_shakes_count', '0');
+          await AsyncStorage.setItem('local_daily_shakes_date', todayISO);
+        } catch (_) {}
+
+        return { reset: true, lastResetISO: todayISO };
+      } else {
+        setLastResetDate(storedISO);
+        return { reset: false, lastResetISO: storedISO };
+      }
+    } catch (error) {
+      console.error('[Dashboard] Error checking/resetting daily shakes:', error);
+      return { reset: false, lastResetISO: null, error: error?.message };
+    }
   }, []);
 
   const fetchUserData = useCallback(async () => {
     try {
       const userData = await api.getCurrentUser();
       console.log('Fetched user data:', userData);
-      
+
       if (userData) {
         const name = userData.name || userData.username || (userData.email ? userData.email.split('@')[0] : 'User');
         setUsername(name);
@@ -51,20 +109,74 @@ export default function DashboardScreen({ navigation }) {
           const mm = String(today.getMonth() + 1).padStart(2, '0');
           const dd = String(today.getDate()).padStart(2, '0');
           const todayDate = `${yyyy}-${mm}-${dd}`;
-          
-          // Get today's shakes
-          const todayShakes = await api.getShakesToday();
-          const dailyCount = Array.isArray(todayShakes) ? todayShakes.length : 0;
-          
-          // Get all shakes for total count
-          const allShakes = await api.getShakes();
-          const totalCount = Array.isArray(allShakes) ? allShakes.length : 0;
-          
-          console.log('Calculated stats - Total:', totalCount, 'Daily:', dailyCount);
+
+          // Get today's shakes - with fallback for backend issues
+          let todayShakes = [];
+          let dailyCount = 0;
+
+          try {
+            todayShakes = await api.getShakesToday();
+            dailyCount = Array.isArray(todayShakes) ? todayShakes.length : 0;
+            console.log('Successfully fetched today\'s shakes from backend:', dailyCount);
+          } catch (shakeError) {
+            console.warn('Backend API failed for today\'s shakes, using client-side fallback:', shakeError.message);
+
+            // Fallback: Use local AsyncStorage to track daily shakes
+            try {
+              const storedDailyCount = await AsyncStorage.getItem('local_daily_shakes_count');
+              const storedDate = await AsyncStorage.getItem('local_daily_shakes_date');
+
+              if (storedDate === todayDate) {
+                dailyCount = parseInt(storedDailyCount || '0', 10);
+                console.log('Using stored daily count:', dailyCount);
+              } else {
+                // New day, reset to 0
+                dailyCount = 0;
+                await AsyncStorage.setItem('local_daily_shakes_count', '0');
+                await AsyncStorage.setItem('local_daily_shakes_date', todayDate);
+                console.log('New day detected, reset daily count to 0');
+              }
+            } catch (storageError) {
+              console.warn('AsyncStorage fallback failed:', storageError.message);
+              dailyCount = 0;
+            }
+          }
+
+          // Check local reset and sync with API count
+          const resetInfo = await checkAndResetDailyShakes();
+          if (resetInfo?.reset) {
+            setDailyShakes(0);
+          } else {
+            setDailyShakes(dailyCount);
+          }
+
+          // Get all shakes for total count - with fallback
+          let allShakes = [];
+          let totalCount = 0;
+
+          try {
+            allShakes = await api.getShakes();
+            totalCount = Array.isArray(allShakes) ? allShakes.length : 0;
+            console.log('Successfully fetched all shakes from backend:', totalCount);
+          } catch (totalShakeError) {
+            console.warn('Backend API failed for all shakes, using local fallback:', totalShakeError.message);
+
+            // Fallback: Use local AsyncStorage to track total shakes
+            try {
+              const storedTotalCount = await AsyncStorage.getItem('local_total_shakes_count');
+              totalCount = parseInt(storedTotalCount || '0', 10);
+              console.log('Using stored total count:', totalCount);
+            } catch (storageError) {
+              console.warn('AsyncStorage fallback failed:', storageError.message);
+              totalCount = 0;
+            }
+          }
+
+          console.log('Final stats - Total:', totalCount, 'Daily:', dailyCount);
           setTotalShakes(totalCount);
-          setDailyShakes(dailyCount);
         } catch (shakeError) {
-          console.error("Error fetching shake statistics:", shakeError);
+          console.error("Error in shake statistics calculation:", shakeError);
+          // Ultimate fallback: reset to 0 and try to recover
           setTotalShakes(0);
           setDailyShakes(0);
         }
@@ -74,8 +186,12 @@ export default function DashboardScreen({ navigation }) {
       }
     } catch (error) {
       console.error("Error fetching user data:", error);
+      // Set fallback values
+      setUsername('User');
+      setTotalShakes(0);
+      setDailyShakes(0);
     }
-  }, [calculateTimeUntilReset]);
+  }, [calculateTimeUntilReset, checkAndResetDailyShakes]);
 
   // Function to parse reward text and extract coin amount
   const parseRewardText = (rewardText) => {
@@ -101,7 +217,7 @@ export default function DashboardScreen({ navigation }) {
       console.log('Fetched activities:', activities);
       const arr = Array.isArray(activities) ? activities : [];
       console.log('Activities array length:', arr.length);
-      
+
       const processedActivities = arr
         .map((activity, i) => {
           console.log('Processing activity:', activity);
@@ -127,10 +243,10 @@ export default function DashboardScreen({ navigation }) {
               timestamp = timestampSource;
             }
           }
-           
+
            // Generate fallback ID more robustly
            const fallbackId = activity._id || activity.id || (timestamp ? timestamp.getTime() : `idx-${i}`);
- 
+
            let title = '';
            switch (activity.type) {
              case 'shake':
@@ -158,10 +274,10 @@ export default function DashboardScreen({ navigation }) {
              default:
                title = activity.title || activity.description || 'Activity';
            }
-          
-          return { 
-            id: String(fallbackId), 
-            ...activity, 
+
+          return {
+            id: String(fallbackId),
+            ...activity,
             timestamp,
             title
           };
@@ -176,12 +292,12 @@ export default function DashboardScreen({ navigation }) {
         });
 
       console.log('Processed activities before sorting:', processedActivities);
-      
+
       // Sort activities by timestamp (newest first)
       processedActivities.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-      
+
       console.log('Processed activities after sorting:', processedActivities);
-      
+
       // Limit to 6 most recent activities
       const limitedActivities = processedActivities.slice(0, 6);
       console.log('Setting recent activities:', limitedActivities);
@@ -205,6 +321,36 @@ export default function DashboardScreen({ navigation }) {
     return () => clearInterval(id);
   }, [calculateTimeUntilReset]);
 
+  // Handle app state changes to check for daily reset when app becomes active
+  useEffect(() => {
+    const handleAppStateChange = (nextAppState) => {
+      if (nextAppState === 'active') {
+        console.log('[Dashboard] App became active, checking for daily reset');
+        checkAndResetDailyShakes();
+        fetchUserData();
+      }
+    };
+
+    const subscription = AppState.addEventListener('change', handleAppStateChange);
+    return () => subscription?.remove();
+  }, [checkAndResetDailyShakes, fetchUserData]);
+
+  // Add this useEffect hook for initial data loading
+  useEffect(() => {
+    // Initial data loading when component mounts
+    console.log('[Dashboard] Initial data loading');
+    checkAndResetDailyShakes();
+    fetchUserData();
+    fetchRecentActivities();
+    
+    // Set up timer to update the reset countdown
+    const timer = setInterval(() => {
+      setTimeUntilReset(calculateTimeUntilReset());
+    }, 60000); // Update every minute
+    
+    return () => clearInterval(timer);
+  }, [fetchUserData, fetchRecentActivities, calculateTimeUntilReset, checkAndResetDailyShakes]);
+
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
@@ -215,7 +361,7 @@ export default function DashboardScreen({ navigation }) {
       setRefreshing(false);
     }
   }, [fetchUserData, fetchRecentActivities]);
-  
+
   const handleLogout = () => {
     Alert.alert(
       "Logout",
@@ -230,20 +376,20 @@ export default function DashboardScreen({ navigation }) {
 
   const formatDate = (date) => {
     if (!date) return '';
-    
+
     const now = new Date();
     const diffDays = Math.floor((now - date) / (1000 * 60 * 60 * 24));
-    
+
     if (diffDays === 0) {
       return `Today, ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
     } else if (diffDays === 1) {
       return `Yesterday, ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
     } else {
-      return date.toLocaleDateString([], { 
-        month: 'short', 
-        day: 'numeric', 
-        hour: '2-digit', 
-        minute: '2-digit' 
+      return date.toLocaleDateString([], {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
       });
     }
   };
@@ -288,9 +434,9 @@ export default function DashboardScreen({ navigation }) {
   };
 
   return (
-    <ScrollView 
-      style={styles.container} 
-      showsVerticalScrollIndicator={false} 
+    <ScrollView
+      style={styles.container}
+      showsVerticalScrollIndicator={false}
       refreshControl={
         <RefreshControl
           refreshing={refreshing}
@@ -335,7 +481,7 @@ export default function DashboardScreen({ navigation }) {
             <Image source={require('../assets/images/shakes.png')} style={styles.statsIcon} />
           </View>
         </View>
-        
+
         <View style={styles.statsRow}>
           <View style={styles.statItem}>
             <Text style={styles.statValue}>{totalShakes}</Text>
@@ -347,7 +493,7 @@ export default function DashboardScreen({ navigation }) {
             <Text style={styles.statLabel}>Today</Text>
           </View>
         </View>
-        
+
         <View style={styles.resetTimerContainer}>
           <Text style={styles.resetTimerText}>
             Reset in: {timeUntilReset}
@@ -400,10 +546,10 @@ export default function DashboardScreen({ navigation }) {
           recentActivities.map((activity) => (
             <View key={activity.id} style={styles.activityItem}>
               <View style={[styles.activityIconBg, { backgroundColor: getBackgroundColor(activity.type) }]}>
-                <Ionicons 
-                  name={getIconForType(activity.type)} 
-                  size={20} 
-                  color={getIconColor(activity.type)} 
+                <Ionicons
+                  name={getIconForType(activity.type)}
+                  size={20}
+                  color={getIconColor(activity.type)}
                 />
               </View>
               <View style={styles.activityInfo}>

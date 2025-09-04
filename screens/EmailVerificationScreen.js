@@ -12,6 +12,7 @@ import {
   ScrollView
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { api } from '../services/api'; // Add this import
 
 export default function EmailVerificationScreen({ navigation, route }) {
   const { email } = route.params || {};
@@ -84,13 +85,21 @@ export default function EmailVerificationScreen({ navigation, route }) {
   };
 
   const handleCheckVerification = async () => {
-    // In offline/test mode, allow user to proceed
     setLoading(true);
-    setTimeout(() => {
+    try {
+      const result = await api.checkEmailVerification(email);
+      if (result.verified) {
+        Alert.alert('Success', 'Your email has been verified!', [
+          { text: 'Continue', onPress: () => navigation.replace('Dashboard') }
+        ]);
+      } else {
+        Alert.alert('Not Verified', 'Your email has not been verified yet. Please check your inbox and click the verification link.');
+      }
+    } catch (error) {
+      Alert.alert('Error', error.message || 'Could not verify email status. Please try again later.');
+    } finally {
       setLoading(false);
-      Alert.alert('Proceed', 'Continuing to login screen for testing.');
-      navigation.replace('Login');
-    }, 800);
+    }
   };
 
   const handleResendEmail = async () => {
@@ -396,3 +405,19 @@ const styles = StyleSheet.create({
     textDecorationLine: 'underline',
   },
 });
+
+const handleResendEmail = async () => {
+  if (!canResend) return;
+  
+  setLoading(true);
+  try {
+    await api.sendVerificationEmail(email);
+    Alert.alert('Email Sent', 'A new verification email has been sent to your inbox.');
+    setTimeLeft(60);
+    setCanResend(false);
+  } catch (error) {
+    Alert.alert('Error', error.message || 'Could not resend verification email. Please try again later.');
+  } finally {
+    setLoading(false);
+  }
+};

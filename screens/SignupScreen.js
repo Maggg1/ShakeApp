@@ -50,6 +50,11 @@ export default function SignupScreen({ navigation }) {
       Alert.alert('Error', 'Please enter your email address');
       return;
     }
+    // Add email validation
+    if (!/\S+@\S+\.\S+/.test(email)) {
+      Alert.alert('Error', 'Please enter a valid email address');
+      return;
+    }
     if (!password.trim()) {
       Alert.alert('Error', 'Please enter your password');
       return;
@@ -62,7 +67,7 @@ export default function SignupScreen({ navigation }) {
       Alert.alert('Error', 'Passwords do not match');
       return;
     }
-
+  
     setLoading(true);
     try {
       const response = await api.register({ name: name.trim(), email: email.trim(), password: password });
@@ -70,15 +75,16 @@ export default function SignupScreen({ navigation }) {
       if (response && response.token) {
         try {
           await api.logActivity({
-            type: 'login',
-            description: 'Successfully logged into the app',
+            type: 'signup',
+            description: 'Successfully registered for the app',
             metadata: {},
           });
         } catch (e) {
-          console.warn('Could not create login activity:', e?.message || e);
+          console.warn('Could not create signup activity:', e?.message || e);
         }
-
-        navigation.replace('Dashboard');
+  
+        // Navigate to email verification screen instead of Dashboard
+        navigation.replace('EmailVerification', { email: email.trim() });
       } else {
         throw new Error('Invalid response from server');
       }

@@ -332,8 +332,15 @@ async function register({ name, email, password }) {
       username: name || MOCK_USER.username,
       email: email || MOCK_USER.email,
       createdAt: todayISO(),
+      emailVerified: false, // Add this line
     };
-    return { token: 'offline-token', user: MOCK_USER };
+    // Automatically send verification email in offline mode
+    try {
+      await sendVerificationEmail(email);
+    } catch (e) {
+      console.warn('Failed to send verification email in offline mode:', e);
+    }
+    return { token: 'offline-token', user: MOCK_USER, requiresVerification: true };
   }
   let res = await tryFetchPaths(
     ['/api/auth/register'],
@@ -350,7 +357,15 @@ async function register({ name, email, password }) {
     }
   }
   if (token) await setToken(token);
-  return { ...res, token };
+  
+  // Automatically send verification email after registration
+  try {
+    await sendVerificationEmail(email);
+  } catch (e) {
+    console.warn('Failed to send verification email:', e);
+  }
+  
+  return { ...res, token, requiresVerification: true };
 }
 
 // Auth user (optional — may require auth on server)
@@ -612,6 +627,40 @@ async function submitFeedback({ title, message, category, rating }) {
   );
 }
 
+// Email verification
+async function sendVerificationEmail(email) {
+  if (OFFLINE_MODE) {
+    await delay(150);
+    return { ok: true, message: 'Verification email sent (offline mode)' };
+  }
+  return tryFetchPaths(
+    ['/api/auth/verify-email/send'],
+    { method: 'POST', body: { email } }
+  );
+}
+
+async function checkEmailVerification(email) {
+  if (OFFLINE_MODE) {
+    await delay(150);
+    return { verified: true, message: 'Email verified (offline mode)' };
+  }
+  return tryFetchPaths(
+    ['/api/auth/verify-email/check'],
+    { method: 'POST', body: { email } }
+  );
+}
+
+async function confirmEmailVerification(token) {
+  if (OFFLINE_MODE) {
+    await delay(150);
+    return { verified: true, message: 'Email verified (offline mode)' };
+  }
+  return tryFetchPaths(
+    ['/api/auth/verify-email/confirm'],
+    { method: 'POST', body: { token } }
+  );
+}
+
 export const api = {
   // config
   API_BASE_URL,
@@ -625,6 +674,9 @@ export const api = {
   disableAccount,
   deleteAccount,
   sendPasswordReset,
+  sendVerificationEmail,     // Add this line
+  checkEmailVerification,    // Add this line
+  confirmEmailVerification,  // Add this line
 
   // activities
   logActivity,
